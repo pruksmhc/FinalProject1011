@@ -4,3 +4,4 @@
 corpus_bleu(sys_stream, ref_streams, smooth='exp', smooth_floor=0.0, force=False, lowercase=False,
                 tokenize=DEFAULT_TOKENIZER, use_effective_order=False) -> BLEU
 
+# use corpus Bleu for the test token. 
