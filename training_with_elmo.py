@@ -163,8 +163,13 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2,  print_every=1
         training_pairs = [random.choice(pairs) for i in range(n_iters)] # samples the pairs. ?
         dev_pairs = [random.choice(dev_pairs) for i in range(n_iters)]
         final_dev_pairs = [isplit(pair,("<EOS>",)) for pair in dev_pairs]
-        input_val_tensor = torch.from_numpy(np.array([tensorFromSentence(lang1, s[0]) for s in final_dev_pairs]))
-        target_val_tensor = torch.from_numpy(np.array([tensorFromSentence(lang2, s[1]) for s in final_dev_pairs]))
+        pdb.set_trace()
+        # TODO: THIS PAR TWITH VALIDATION IS THE LAST THING THAT DOESN'T QUITE WORK. 
+        input_val = torch.LongTensor([tensorFromSentence(lang1, s[0]) for s in final_dev_pairs])
+        target_val = torch.Tensor([tensorFromSentence(lang1, s[1]) for s in final_dev_pairs])
+        input_val_tensor = torch.FloatTensor()
+        yo = torch.cat(input_val_tensor, input_val)
+        target_val_tensor = torch.from_numpy(np.array(target_val))
         criterion = nn.NLLLoss()
         # framing it as a categorical loss function. 
         for iter in range(1, n_iters + 1):
