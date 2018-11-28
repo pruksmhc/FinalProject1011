@@ -37,7 +37,6 @@ def load_elmo(all_tokens, language=""):
     # For Chinese + Vietnamese, we use pretrained https://github.com/HIT-SCIR/ELMoForManyLangs
     all_tokens = list(set(all_tokens))
     current_word2idx = {all_tokens[i]: i+4 for i in range(len(all_tokens))}
-    current_word2idx["pad"] = 0
     current_word2idx["unk"] = 1
     current_word2idx["<SOS>"] = 2
     current_word2idx["<EOS>"] = 3
@@ -175,7 +174,7 @@ def readLangs(lang1, lang2, dataset_type, reverse=False):
     # Split every line into pairs and normalize
     pairs = []
     dirlink = "preprocessed_data/iwslt-%s-%s/%s_11" % (lang1, lang2, dataset_type)
-    for i in range(132736, len(lang1_file)):
+    for i in range(len(lang1_file)):
         print(i)
         pair = ["<SOS>"]
         lang1_text = token_funcs[lang1](normalizeString(lang1_file[i]))
@@ -189,6 +188,8 @@ def readLangs(lang1, lang2, dataset_type, reverse=False):
     return pairs
 
 """
+There's something wrong wtiht he actual ELMO embedding:
+With English, 
 output_pair = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_output" % ("vi", "en", "train"), "rb"))
 # load the ELMO weight embedidngs for ONLY train vocabulary
 all_tokens_vicurrent_word2idx, all_tokens_vifinal_weights = load_elmo(output_pair.word2count.keys())
@@ -198,7 +199,7 @@ output_pair = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_output" % ("zh"
 
 pdb.set_trace()
 all_tokens_vicurrent_word2idx, all_tokens_vifinal_weights = load_elmo(list(output_pair.word2count.keys())[5000:])
-pickle.dump(all_tokens_vifinal_weights, open("weights_train_en2_rest", "wb"))
+pickle.dump(all_tokens_vifinal_weights, open("weights_train_en2_rest", "rb"))
 
 pdb.set_trcae()<
 input_lang = pickle.load(open("preprocessed_data/iwslt-%s-%s/train_input" % ("vi", "en"), "rb"))

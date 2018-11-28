@@ -3,11 +3,11 @@ import time
 import math
 import pdb
 import pickle
-from Model1 import * 
+from Models import * 
 import torch
 import torch.nn as nn
-import preprocessing
-from preprocessing import Lang
+import preprocessing_with_elmo
+from preprocessing_with_elmo import Lang
 import random
 import itertools
 
@@ -29,6 +29,7 @@ def timeSince(since, percent):
 SOS_token = 2
 EOS_token = 3
 
+# ELMO. 
 class Lang:
     # This class counts the index to word. 
     def __init__(self, name):
@@ -53,7 +54,7 @@ class Lang:
         else:
             self.word2count[word] += 1
 
-# 
+
 def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length,attention=False):
     encoder_hidden = encoder.initHidden()
 
@@ -65,6 +66,7 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
     criterion = nn.NLLLoss()
 
     encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+    # Here, teh outputs is hidden_Size x mmax_lengt
     # waht is encoder-decoder methodology? 
     loss = 0
 
@@ -77,7 +79,7 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
     decoder_input = torch.tensor([[SOS_token]], device=device)
 
     decoder_hidden = encoder_hidden
-
+    # encoder_hidden is the last hidden state of the encoder. 
     use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
     if use_teacher_forcing:
         # Teacher forcing: Feed the target as the next input
@@ -104,7 +106,6 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
             # so only sotp when you see an EOS_token
             if decoder_input.item() == EOS_token:
                 break
-
     loss.backward()
 
     encoder_optimizer.step()
@@ -150,7 +151,7 @@ def tensorFromSentence(lang, sentence):
 
 def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2,  print_every=1000, plot_every=100, learning_rate=0.001):
     pairs = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s" % (lang1.name, lang2.name, "train_tokenized"), "rb"))
-    dev_pairs = pickle.load(open("preprocessed_data/iwslt-vi-en/dev_indexed", "rb"))
+    dev_pairs = pickle.load(open("preprocessed_data/iwslt-vi-en/dev_tokenized", "rb"))
     start = time.time()
     plot_losses = []
     print_loss_total = 0  # Reset every print_every
@@ -160,10 +161,14 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2,  print_every=1
     for i in range(n_epochs):
         # so now, becuase we've already indeed, 
         training_pairs = [random.choice(pairs) for i in range(n_iters)] # samples the pairs. ?
+        dev_pairs = [random.choice(dev_pairs) for i in range(n_iters)]
+        final_dev_pairs = [isplit(pair,("<EOS>",)) for pair in dev_pairs]
+        input_val_tensor = torch.from_numpy(np.array([tensorFromSentence(lang1, s[0]) for s in final_dev_pairs]))
+        target_val_tensor = torch.from_numpy(np.array([tensorFromSentence(lang2, s[1]) for s in final_dev_pairs]))
         criterion = nn.NLLLoss()
         # framing it as a categorical loss function. 
         for iter in range(1, n_iters + 1):
-            print(inter)
+            print(iter)
             training_pair = training_pairs[iter - 1] 
             training_pair_final = isplit(training_pair,("<EOS>",))
             # and now we split by the <EOS> tag sicne we hav ethat 
@@ -185,8 +190,9 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2,  print_every=1
                 print_loss_total = 0
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, iter / n_epochs),
                                              iter, iter / n_epochs * 100, print_loss_avg))
-                VAL_loss = train(input_val_tensor, target_val_tensor, encoder,
-                 decoder, encoder_optimizer, decoder_optimizer, criterion)
+                val_loss = train(input_val_tensor, target_val_tensor, encoder,
+                decoder, encoder_optimizer, decoder_optimizer, criterion, MAX_LENGTH_VI_EN)
+                print("VALIDATION SCORE: "+str(val_loss))
 
             if iter % plot_every == 0:
                 plot_loss_avg = plot_loss_total / plot_every
@@ -195,18 +201,33 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2,  print_every=1
 
     showPlot(plot_losses)
 # get the tokenzied parts. 
-hidden_size = 1024
-train_data = pickle.load(open("preprocessed_data/iwslt-vi-en/train_indexed", "rb"))
-lang_object_input =  pickle.load(open("preprocessed_data/iwslt-vi-en/train_input", "rb"))
-lang_object_output =  pickle.load(open("preprocessed_data/iwslt-vi-en/train_output", "rb"))
-# attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
+# Finishign the inference function. 
+def trainNoAttention(lang1, lang2):
+    hidden_size = 1024
+    train_data = pickle.load(open("preprocessed_data/iwslt-vi-en/train_indexed", "rb"))
+    lang_object_input =  pickle.load(open("preprocessed_data/iwslt-"+lang1+"-"+lang2+"/train_input", "rb"))
+    lang_object_output =  pickle.load(open("preprocessed_data/iwslt-"+lang1+"-"+lang2+"/train_output", "rb"))
+    # attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
 
-weights_en_torch = torch.load("weights_en_torch")
-weights_vi_torch = torch.load("weights_vi_torch")
-encoder = EncoderRNN(lang_object_input.n_words, hidden_size, weights_vi_torch).to(device)
-decoder = DecoderRNN(hidden_size, lang_object_output.n_words, weights_en_torch).to(device)
-trainIters(encoder, decoder, 750, 10, lang_object_input, lang_object_output, print_every=5) #train on a small subset
+    weights_l1_torch = torch.load("weights_"+lang1+"_torch")
+    weights_l2_torch = torch.load("weights_"+lang2+"_torch")
+    encoder = EncoderRNN(lang_object_input.n_words, hidden_size, weights_l1_torch).to(device)
+    decoder = DecoderRNN(hidden_size, lang_object_output.n_words, weights_l2_torch).to(device)
+    trainIters(encoder, decoder, 750, 10, lang_object_input, lang_object_output, print_every=5) #train on a small subset
 
-# i hsould have called it dev_tokenied, adn then dev_indexed. 
+def trainWithAttention(lang1, lang2):
+    hidden_size = 1024
+    train_data = pickle.load(open("preprocessed_data/iwslt-vi-en/train_indexed", "rb"))
+    lang_object_input =  pickle.load(open("preprocessed_data/iwslt-"+lang1+"-"+lang2+"/train_input", "rb"))
+    lang_object_output =  pickle.load(open("preprocessed_data/iwslt-"+lang1+"-"+lang2+"/train_output", "rb"))
+    # attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
 
+    weights_en_torch = torch.load("weights_en_torch")
+    weights_vi_torch = torch.load("weights_vi_torch")
+    encoder = EncoderRNN(lang_object_input.n_words, hidden_size, weights_vi_torch).to(device)
+    decoder = DecoderRNN(hidden_size, lang_object_output.n_words, weights_en_torch).to(device)
+    trainIters(encoder, decoder, 750, 10, lang_object_input, lang_object_output, print_every=5) #train on a small subset
+
+
+trainNoAttention("vi", "en")
 
