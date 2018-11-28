@@ -45,7 +45,6 @@ def load_elmo(all_tokens, language=""):
     elmo = ElmoEmbedder()
     if language == "zh":
         e = Embedder('179')
-        all_tokens = all_tokens[:10]
         weights = e.sents2elmo(all_tokens)
         weights = preprocess_weights(weights)
         # so this basically returns a 3x 1024 for any words that are 
@@ -69,11 +68,20 @@ def load_elmo(all_tokens, language=""):
     final_weights.append(start_vector)
     final_weights.append(end_vector)
     final_weights.extend(weights)
-    pdb.set_trace()
     return current_word2idx, final_weights
 
 SOS_token = 0
 EOS_token = 1
+
+def transform_dict(curr_dict):
+    new_dict = {}
+    new_dict[0] = "pad"
+    new_dict[1] = "unk"
+    for key, value in list(curr_dict.items()):
+        new_dict[key+2] = value
+    new_dict[2] = "<SOS>"
+    new_dict[3] = "<EOS>"
+    return new_dict
 
 class Lang:
     # This class counts the index to word. 
@@ -81,8 +89,8 @@ class Lang:
         self.name = name
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {0: "sos", 1: "eos"}
-        self.n_words = 2  # Count SOS and EOS
+        self.index2word = {0: "pad", 1: "unk", 2: "<SOS>", 3: "<EOS>"}
+        self.n_words = 2  # so now, let'scount this again. 
 
     def addSentence(self, sentence, language):
         # and we have the tokenization here.
@@ -107,11 +115,11 @@ def tokenize_vi(sentence):
 def tokenize_zh(sentence):
     tokens = jieba.cut(sentence, cut_all=True)
     return tokens
-
+tokenizer = spacy.load('en_core_web_sm')
 def tokenize_en(sentence):
-    tokenizer = spacy.load('en_core_web_sm')
     tokens = tokenizer(sentence)
-    return tokens
+    final = [t.text for t in tokens]
+    return final
 
 token_funcs = {"en": tokenize_en, "vi": tokenize_vi, "zh": tokenize_zh}
 # Turn a Unicode string to plain ASCII, thanks to
@@ -130,6 +138,30 @@ def normalizeString(s):
     s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
     return s
 # so normalize the string. 
+def tokenize_indices(lang1, lang2, dataset, index, reverse=False):
+    print("Reading lines...")
+
+    # Read the file and split into lines
+    text_file = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_%s" % (lang1, lang2, dataset, index), "rb"))
+    output_pair = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_output" % ("zh", "en", "train"), "rb"))
+    input_pair = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_input" % ("vi", "en", "train"), "rb"))
+    new_file = []
+    for i in range(len(text_file)):
+        #eos sos, eos sos. 
+        text = text_file[i]
+        word2idx = input_pair.word2index
+        new = []
+        for word in text:
+            if word == "<EOS>":
+                word2idx = output_pair.word2index
+            if word[0] in word2idx.keys():
+                new.append(word2idx[word[0]])
+            else:
+                new.append(word2idx["unk"])
+        new_file.append(new)
+    pdb.set_trace()
+    pickle.dump(new_file, open("preprocessed_data/iwslt-%s-%s/%s_indexed_%s" % (lang1, lang2, dataset, index), "wb"))
+    return new_file
 
 def readLangs(lang1, lang2, dataset_type, reverse=False):
     print("Reading lines...")
@@ -141,25 +173,21 @@ def readLangs(lang1, lang2, dataset_type, reverse=False):
     lang2_file = open('iwslt-%s-%s/%s.tok.%s' % (lang1, lang2, dataset_type, lang2), encoding='utf-8').\
         read().strip().split('\n')
     # Split every line into pairs and normalize
-    pairs = [normalizeString(lang1_file[i] +"EOS" + lang2_file[i] +"EOS") for i in range(len(lang1_file))]
+    pairs = []
+    dirlink = "preprocessed_data/iwslt-%s-%s/%s_11" % (lang1, lang2, dataset_type)
+    for i in range(132736, len(lang1_file)):
+        print(i)
+        pair = ["<SOS>"]
+        lang1_text = token_funcs[lang1](normalizeString(lang1_file[i]))
+        pair.extend(lang1_text)
+        pair.extend(["<EOS>", "<SOS>"])
+        lang2_text = token_funcs[lang2](normalizeString(lang2_file[i]))
+        pair.extend(lang2_text)
+        pair.extend(["<EOS>"])
+        pairs.append(pair)
+        pickle.dump(pairs, open(dirlink, "wb"))
+    return pairs
 
-    # Reverse pairs, make Lang instances
-    if reverse:
-        pairs = [list(reversed(p)) for p in pairs]
-        input_lang = Lang(lang2)
-        output_lang = Lang(lang1)
-    else:
-        input_lang = Lang(lang1)
-        output_lang = Lang(lang2)
-    for i in range(len(lang1_file)):
-        # tokenizes based on the language. 
-        input_lang.addSentence(lang1_file[i], lang1)
-        output_lang.addSentence(lang2_file[i], lang2)
-
-    pickle.dump(pairs, open("preprocessed_data/iwslt-%s-%s/%s" % (lang1, lang2, dataset_type), "wb"))
-    pickle.dump(input_lang, open("preprocessed_data/iwslt-%s-%s/%s_input" % (lang1, lang2, dataset_type), "wb"))
-    pickle.dump(output_lang, open("preprocessed_data/iwslt-%s-%s/%s_output" % (lang1, lang2, dataset_type), "wb"))
-    return input_lang, output_lang, pairs
 """
 output_pair = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_output" % ("vi", "en", "train"), "rb"))
 # load the ELMO weight embedidngs for ONLY train vocabulary
@@ -172,16 +200,54 @@ pdb.set_trace()
 all_tokens_vicurrent_word2idx, all_tokens_vifinal_weights = load_elmo(list(output_pair.word2count.keys())[5000:])
 pickle.dump(all_tokens_vifinal_weights, open("weights_train_en2_rest", "wb"))
 
-pdb.set_trcae()
+pdb.set_trcae()<
+input_lang = pickle.load(open("preprocessed_data/iwslt-%s-%s/train_input" % ("vi", "en"), "rb"))
+output_lang = pickle.load(open("preprocessed_data/iwslt-%s-%s/train_output" % ("vi", "en"), "rb"))
+pdb.set_trace()
+new_train = []
+curr_length = 0
+i = 1
+train = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_indexed_%s" % ("vi", "en", "train", str(i)), "rb"))
+
+new_train.extend(train)
+pdb.set_trace()
+pickle.dump(new_train, open("preprocessed_data/iwslt-vi-en/train_indexed", "wb"))
+
+lang1 = "vi"
+lang2 = "en"
+dataset = "train"
+indices1 = tokenize_indices(lang1, lang2, dataset,"1")
+indices2 = tokenize_indices(lang1, lang2, dataset,"2")
+indices4 =tokenize_indices(lang1, lang2, dataset,"4")
+indices5 =tokenize_indices(lang1, lang2, dataset,"5")
+indices6 =tokenize_indices(lang1, lang2, dataset,"6")
+indices7 =tokenize_indices(lang1, lang2, dataset,"7")
+indices8 =tokenize_indices(lang1, lang2, dataset,"8")
+indices9 =tokenize_indices(lang1, lang2, dataset,"9")
+indices10 =tokenize_indices(lang1, lang2, dataset,"10")
+indices11 =tokenize_indices(lang1, lang2, dataset,"11")
 """
-input_pair = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_input" % ("zh", "en", "train"), "rb"))
+indices1 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_1", "rb"))
+indices2 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_2", "rb"))
+indices4 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_4","rb"))
+indices5 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_5", "rb"))
+indices6 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_6", "rb"))
+indices7 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_7", "rb"))
+indices8 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_8", "rb"))
+indices9 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_9", "rb"))
+indices10 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_10", "rb"))
+indices11 = pickle.load(open("preprocessed_data/iwslt-vi-en/train_11", "rb"))
+indices1.extend(indices2)
+indices1.extend(indices4)
+indices1.extend(indices5)
+indices1.extend(indices6)
+indices1.extend(indices7)
+indices1.extend(indices8)
+indices1.extend(indices9)
+indices1.extend(indices10)
+indices1.extend(indices11)
+pickle.dump(indices1, open("preprocessed_data/iwslt-vi-en/train_tokenized", "wb"))
 
-all_tokens_zhcurrent_word2idx, all_tokens_zhfinal_weights = load_elmo(input_pair.word2count.keys(), "zh")
-pickle.dump(all_tokens_zhfinal_weights, open("weights_train_zh", "wb"))
 
-
-input_pair = pickle.load(open("preprocessed_data/iwslt-%s-%s/%s_input" % ("vi", "en", "train"),  "rb"))
-all_tokens_vicurrent_word2idx, all_tokens_vifinal_weights = load_elmo(input_psair.word2count.keys(), "vi")
-pickle.dump(all_tokens_vifinal_weights, open("weights_train_vi", "wb"))
 
 
