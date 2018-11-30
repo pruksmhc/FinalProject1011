@@ -6,6 +6,7 @@ def calculate_bleu(predictions, labels):
 	"""
 	Only pass a islt of strings for both in english for our ase. 
 	"""
+	# tthis is ony with n_gram = 4
 
 	bleu = sacrebleu.raw_corpus_bleu(predictions, [labels], .01).score
 	return bleu
