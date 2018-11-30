@@ -104,7 +104,7 @@ def train(input_tensor, target_tensor, length1, length2, order_target_for_source
     return loss.item() / target_length
 
 def trainIters(encoder, decoder, n_epochs, lang1, lang2,  print_every=1000, plot_every=100, learning_rate=0.001):
-    pairs = load_cpickle_gc("preproessed_no_indices_pairs_"+str(lang1.name)+"_"+str(lang2.name))
+    pairs = load_cpickle_gc("preprocessed_no_indices_pairs_"+str(lang1.name)+"_"+str(lang2.name))
     # just to test, let's try making the size 32 so that we know what to expect
     BATCH_SIZE = 32
     train_dataset = TranslationDataset(pairs, lang1, lang2)
@@ -132,8 +132,7 @@ def trainIters(encoder, decoder, n_epochs, lang1, lang2,  print_every=1000, plot
         	if iter % print_every == 0:
         		print_loss_avg = print_loss_total / print_every
         		print_loss_total = 0
-        		pdb.set_trace()
-        		print('TRAIN SCORE '+str(print_loss_avg) +'at iteration '+iter)
+        		print('TRAIN SCORE '+str(print_loss_avg) +'at iteration '+str(iter))
         	if iter % plot_every == 0:
         		plot_loss_avg = plot_loss_total / plot_every
         		plot_losses.append(plot_loss_avg)
@@ -155,4 +154,4 @@ def trainNoAttention(lang1, lang2):
 
 
 
-trainNoAttention("vi", "en")
+trainNoAttention("vi", "eng")

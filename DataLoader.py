@@ -98,7 +98,7 @@ def get_index(query_list, in_list):
     order = []
     for i in range(len(in_list)):
         elt = in_list[i]
-        if np.array(query_list).sum() == np.array(elt).sum():
+        if np.array(query_list).sum() == np.array(elt).sum() and query_list[0] == elt[0] and query_list[-1] == elt[-1]:
             return i
     return -1
 
@@ -154,7 +154,9 @@ def translation_collate_func_concat(batch):
         source_qn = check_list[i]
         index_target = get_index(target_qn, second_data_list)
         index_source = get_index(source_qn, first_data_list)
-        assert index_target == index_source
+        if index_target != index_source:
+            pdb.set_trace()
+
 
     return [torch.LongTensor(data_list_first), torch.LongTensor(data_list_second), torch.LongTensor(length_first),  torch.LongTensor(length_second), torch.LongTensor( order_target_for_source)]
 
