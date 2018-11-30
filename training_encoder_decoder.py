@@ -203,4 +203,4 @@ def trainWithAttention(lang1, lang2):
     trainIters(encoder, decoder, 750, 10, lang_object_input, lang_object_output, print_every=5) #train on a small subset
 
 
-trainNoAttention("vi", "eng")
+trainNoAttention("zh", "eng")
