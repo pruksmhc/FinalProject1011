@@ -7,8 +7,6 @@ import pickle
 from ModelsWithoutElmo import * 
 import torch
 import torch.nn as nn
-import preprocessing_with_elmo
-from preprocessing_with_elmo import Lang
 import random
 import itertools
 from DataLoader import * 
@@ -16,7 +14,45 @@ import numpy as np
 SOS_token = 2
 EOS_token = 3
 MAX_LENGTH_VI_EN = 1310
+# max_length_zh_en
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import matplotlib.pyplot as plt
+plt.switch_backend('agg')
+import matplotlib.ticker as ticker
+import numpy as np
+
+
+class Lang:
+    # This class counts the index to word. 
+    def __init__(self, name):
+        self.name = name
+        self.word2index = {}
+        self.word2count = {}
+        self.index2word = {0: "pad", 1: "unk", 2: "<SOS>", 3: "<EOS>"}
+        self.n_words = 2  # so now, let'scount this again. 
+
+    def addSentence(self, sentence, language):
+        # and we have the tokenization here.
+        tokens = token_funcs[language](sentence)
+        for word in tokens:
+            self.addWord(word)
+
+    def addWord(self, word):
+        if word not in self.word2index:
+            self.word2index[word] = self.n_words
+            self.word2count[word] = 1
+            self.index2word[self.n_words] = word
+            self.n_words += 1
+        else:
+            self.word2count[word] += 1
+
+def showPlot(points):
+    plt.figure()
+    fig, ax = plt.subplots()
+    # this locator puts ticks at regular intervals
+    loc = ticker.MultipleLocator(base=0.2)
+    ax.yaxis.set_major_locator(loc)
+    plt.plot(points)
 
 
 import time
@@ -57,7 +93,7 @@ def train(input_tensor, target_tensor, length1, length2, order_target_for_source
     for ei in range(input_length):
     	input_slice = torch.LongTensor([[x[ei]]for x in input_tensor])
     	encoder_output, encoder_hidden = encoder(input_slice, encoder_hidden, length1) # take the slice through time
-    	encoder_output = encoder_output.view((32, 1024))
+    	encoder_output = encoder_output.view((batch_size, encoder.hidden_size))
     	for i in range(len(encoder_output)):
     		encoder_outputs[i, ei] = encoder_output[i]
     # here, encoder_output must be of the size [[1,], [2], [3] , ] 
@@ -65,9 +101,9 @@ def train(input_tensor, target_tensor, length1, length2, order_target_for_source
     SOS_tokens = [[SOS_token] for i in range(len(input_tensor))] # 32 
     decoder_input = torch.tensor(SOS_tokens, device=device)
     # TODO Now we match from the order of order_1 to the order of order_2, trnsform the encoder hidden 
-    encoder_hidden = encoder_hidden.view((32, 1024))
+    encoder_hidden = encoder_hidden.view((batch_size, encoder.hidden_size))
     encoder_hidden_aligned = torch.index_select(encoder_hidden, 0, order_target_for_source)
-    decoder_hidden = encoder_hidden_aligned.view((1, 32, 1024))
+    decoder_hidden = encoder_hidden_aligned.view((1, batch_size, encoder.hidden_size))
 
     # encoder_hidden is the last hidden state of the encoder. 
     use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
@@ -104,7 +140,9 @@ def train(input_tensor, target_tensor, length1, length2, order_target_for_source
     return loss.item() / target_length
 
 def trainIters(encoder, decoder, n_epochs, lang1, lang2,  print_every=1000, plot_every=100, learning_rate=0.001):
-    pairs = load_cpickle_gc("preprocessed_no_indices_pairs_"+str(lang1.name)+"_"+str(lang2.name))
+    # tHIS trains for various epochs, and then 
+    # this basically 
+    pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1.name+"-"+lang2.name+"/preprocessed_no_indices_pairs_train")
     # just to test, let's try making the size 32 so that we know what to expect
     BATCH_SIZE = 32
     train_dataset = TranslationDataset(pairs, lang1, lang2)
@@ -137,21 +175,32 @@ def trainIters(encoder, decoder, n_epochs, lang1, lang2,  print_every=1000, plot
         		plot_loss_avg = plot_loss_total / plot_every
         		plot_losses.append(plot_loss_avg)
         		plot_loss_total = 0
-
+    pickle.dump(encoder, open("encoder_" +lang1+"_"+lang2, "wb"))
+    pickle.dump(decoder, open("decoder_" +lang1+"_"+"lang2", "wb"))
     showPlot(plot_losses)
 
-
 def trainNoAttention(lang1, lang2):
-    hidden_size = 1024
-    lang_object_input =  load_cpickle_gc("preprocessed_no_elmo_"+lang1+"lang")
-    lang_object_output =  load_cpickle_gc("preprocessed_no_elmo_"+lang2+"lang")
+    hidden_size = 256
+    batch_size = 32
+    lang_object_input =  load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang")
+    lang_object_output =  load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang2+"lang")
     # attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
-
-    encoder = EncoderRNN(lang_object_input.n_words, hidden_size).to(device)
-    decoder = DecoderRNN(lang_object_output.n_words, hidden_size).to(device)
+    encoder = EncoderRNN(lang_object_input.n_words,batch_size, hidden_size).to(device)
+    decoder = DecoderRNN(lang_object_output.n_words, batch_size, hidden_size).to(device)
     trainIters(encoder, decoder, 10, lang_object_input, lang_object_output, print_every=5) #train on a small subset
 
+def trainWithAttention(lang1, lang2):
+    hidden_size = 1024
+    train_data = pickle.load(open("preprocessed_data/iwslt-vi-en/train_indexed", "rb"))
+    lang_object_input =  pickle.load(open("preprocessed_data/iwslt-"+lang1+"-"+lang2+"/train_input", "rb"))
+    lang_object_output =  pickle.load(open("preprocessed_data/iwslt-"+lang1+"-"+lang2+"/train_output", "rb"))
+    # attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
 
+    weights_en_torch = torch.load("weights_en_torch")
+    weights_vi_torch = torch.load("weights_vi_torch")
+    encoder = EncoderRNN(lang_object_input.n_words, hidden_size, weights_vi_torch).to(device)
+    decoder = DecoderRNN(hidden_size, lang_object_output.n_words, weights_en_torch).to(device)
+    trainIters(encoder, decoder, 750, 10, lang_object_input, lang_object_output, print_every=5) #train on a small subset
 
 
 trainNoAttention("vi", "eng")
