@@ -16,8 +16,106 @@ import _pickle as cPickle
 import gc
 
 
+# Turn a Unicode string to plain ASCII, thanks to
+# http://stackoverflow.com/a/518232/2809427
+def unicodeToAscii(s):
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+    )
+
+# Lowercase, trim, and remove non-letter characters
+
+
+def normalizeString(s):
+    s = unicodeToAscii(s.lower().strip())
+    s = re.sub(r"([.!?])", r" \1", s)
+    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
+    return s
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def prepareReference(lang, sentence):
+    # what this does is basicallyp prepares thee refernece and removes the <UNK> data. 
+    # lang1 - str 
+    # lang2 - str 
+    words = sentence.split(" ")
+    current = []
+    for word in words:
+        if lang.word2index.get(word) is not None:
+            current.append(word)
+        else:
+            current.append("UNK")
+    return " ".join(current)
+
+def readLangs(input_file, target_file, input_lang, target_lang, size):
+    # this handles for Chinese
+    print("Reading lines...")
+
+    # Read the file and split into lines
+    input_lines = open(input_file, encoding='utf-8').read().strip().split("\n")
+    target_lines = open(target_file, encoding='utf-8').read().strip().split("\n")
+    if input_lang == "zh":
+        is_not_thing = lambda x: x is not ''
+        cleaned_list = list(filter(is_not_thing, input_lines))
+        input_lines = [' '.join(s.split()) for s in cleaned_list]
+        pdb.set_trace()
+        target_pair = [normalizeString(s) for s in target_lines]
+        pairs = list(zip(input_lines, target_lines))
+    else:
+        lines = list(zip(input_lines, target_lines))
+        # Split every line into pairs and normalize
+        pairs = [[normalizeString(s) for s in l] for l in lines]
+    print(pairs[0])
+
+    input_lang = Lang(input_lang)
+    target_lang = Lang(target_lang)
+
+    return input_lang, target_lang, pairs
+
+
+
+def preparTraineData(input_file, target_file, input_lang, target_lang, size):
+    input_lang, target_lang, pairs = readLangs(input_file, target_file, input_lang, target_lang, size)
+    print("Read %s sentence pairs" % len(pairs))
+    print("Counting words...")
+    print(pairs[0])
+    for pair in pairs:
+        input_lang.addSentence(pair[0])
+        target_lang.addSentence(pair[1])
+    print("Counted words:")
+    print(input_lang.name, input_lang.n_words)
+    print(target_lang.name, target_lang.n_words)
+    return input_lang, target_lang, pairs
+
+def prepareDataInitial(lang1, lang2):
+    # This sts up everything you need for preprocessing. 
+    input_file = 'iwslt-zh-en/train.tok.zh'
+    target_file = 'iwslt-zh-en/train.tok.en'
+    input_lang_train, target_lang_train, pairs = prepareTrainData(input_file, target_file, 'zh', 'eng', size=50000)
+    pickle.dump(pairs, open("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_indices_pairs_train", "wb"))
+    pickle.dump(input_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang", "wb"))
+    pickle.dump(target_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang2+"lang", "wb"))
+    lang2 = "eng"
+    for lang1 in ["zh", "vi"]:
+        for dataset in ["validation", "test"]:
+            input_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang")
+            target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_englang")
+            if dataset == "validation":
+                source_language =  open("iwslt-"+lang1+"-en/dev.tok."+lang1, encoding='utf-8').read().strip().split("\n")
+                actual_english_test = open("iwslt-"+lang1+"-en/dev.tok.en", encoding='utf-8').read().strip().split("\n")
+            else:
+                source_language = open("iwslt-"+lang1+"-en/"+dataset+".tok."+lang1, encoding='utf-8').read().strip().split("\n")
+                actual_english_test = open("iwslt-"+lang1+"-en/"+dataset+".tok.en", encoding='utf-8').read().strip().split("\n")
+            if lang1 == "vi":
+                tensors_input = [tensorFromSentence(input_lang, normalizeString(s), 0) for s in source_language]
+            elif lang1 == "zh":
+                # don't normalize
+                tensors_input = [tensorFromSentence(input_lang,s, 0) for s in source_language]
+            reference_convert =[prepareReference(target_lang, normalizeString(s)) for s in actual_english_test]
+            final_pairs = list(zip(tensors_input, reference_convert))
+            pdb.set_trace()
+            pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_indices_pairs_"+ dataset+"_tokenized", "wb"))
 
 class Lang:
     def __init__(self, name):
@@ -67,9 +165,6 @@ def tensorsFromPair(pair, input_lang, target_lang, i):
     target_tensor = tensorFromSentence(target_lang, pair[1], i)
     return (input_tensor, target_tensor)
 
-
-
-
 SOS_token = 0
 EOS_token = 1
 UNK_token = 2
@@ -111,6 +206,47 @@ class DecoderRNN(nn.Module):
 
     def initHidden(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
+class EncoderRNNBidirectional(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(EncoderRNNBidirectional, self).__init__()
+        self.hidden_size = hidden_size
+
+        self.embedding = nn.Embedding(input_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size, bidirectional=True)
+
+    def forward(self, input, hidden):
+        embedded = self.embedding(input).view(1, 1, -1)
+        output, hidden = self.gru(embedded, hidden)
+        # output and hidden are the same vectors
+        return output, hidden
+
+    def initHidden(self):
+        return torch.zeros(2, 1, self.hidden_size, device=device)
+
+
+class DecoderRNNBidirectional(nn.Module):
+    def __init__(self, output_size, hidden_size):
+        super(DecoderRNNBidirectional, self).__init__()
+        self.hidden_size = hidden_size*2
+
+        self.embedding = nn.Embedding(output_size, hidden_size*2)
+        self.gru = nn.GRU(hidden_size*2,  hidden_size*2)
+        self.out = nn.Linear(hidden_size*2, hidden_size*4) # sincec output_size >> hidden_size, we increase 
+        # this
+        self.out2 = nn.Linear(hidden_size*4, output_size)
+        self.softmax = nn.LogSoftmax(dim=1)
+
+    def forward(self, input, hidden):
+        output = self.embedding(input).view(1, 1, -1)
+        output = F.relu(output)
+        output, hidden = self.gru(output, hidden.view(1, 1, -1))
+        output = self.out(output[0])
+        output = F.relu(output)
+        output = self.softmax(self.out2(output))
+        return output, hidden
+
+    def initHidden(self):
+        return torch.zeros(2, 1, self.hidden_size, device=device)
 
 
 teacher_forcing_ratio = 0.5
@@ -126,7 +262,7 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
     input_length = input_tensor.size(0)
     target_length = target_tensor.size(0)
 
-    encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+    encoder_outputs = torch.zeros(max_length, decoder.hidden_size, device=device)
 
     loss = 0
 
@@ -134,7 +270,7 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
     for ei in range(input_length):
         encoder_output, encoder_hidden = encoder(
             input_tensor[ei], encoder_hidden)
-        encoder_outputs[ei] = encoder_output[0, 0]
+        encoder_outputs[ei] = encoder_output[0,0]
 
     decoder_input = torch.tensor([[SOS_token]], device=device)
 
@@ -200,15 +336,16 @@ def load_cpickle_gc(dirlink):
     output.close()
     return mydict
 
-def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, print_every=1000, plot_every=100, learning_rate=0.001, search="greedy"):
+def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, print_every=1000, plot_every=100, learning_rate=3e-4, search="beam"):
     """
     lang1 is the Lang o|bject for language 1 
     Lang2 is the Lang object for language 2
     n_iters is the number of training pairs per epoch you want to train on
     """
     training_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1.name+"-"+lang2.name+"/preprocessed_no_indices_pairs_train_tokenized")
-    validation_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_indices_pairs_validation_tokenized")
-
+    n_iters = len(training_pairs)
+    validation_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1.name+"-"+lang2.name+"/preprocessed_no_indices_pairs_validation_tokenized")
+    pickle.dump(validation_pairs, open("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_indices_pairs_validation_tokenized", "wb"))
     start = time.time()
     plot_losses = []
     val_losses = []
@@ -249,11 +386,10 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, pr
                 val_losses.append(val_loss_avg)
                 plot_loss_total = 0
                 val_loss_total = 0
-        pickle.dump(encoder, open("encoder_"+str(num_epochs), "wb"))
-        pickle.dump(decoder, open("decoder_"+str(num_epochs), "wb"))
-        pickle.dump(plot_loss_avg, open("training_loss", "wb"))
-        pickle.dump(val_loss_avg, open("val_loss", "wb"))
-        pdb.set_trace()
+        pickle.dump(encoder, open("encoder_"+str(n_epochs)+str(lang1.name)+str(lang2.name), "wb"))
+        pickle.dump(decoder, open("decoder_"+str(n_epochs)+str(lang1.name)+str(lang2.name), "wb"))
+        pickle.dump(plot_loss_avg, open("training_loss"+str(lang1.name)+str(lang2.name), "wb"))
+        pickle.dump(val_loss_avg, open("val_loss"+str(lang1.name)+str(lang2.name), "wb"))
     showPlot(plot_losses)
 
 import matplotlib.pyplot as plt
@@ -324,7 +460,21 @@ def beam_search(decoder, decoder_input, hidden, max_length, k = 2):
     return final_translation
 
 
-def evaluate(encoder, decoder, sentence, max_length, search="greedy", k= None):
+def evaluateRandomly(encoder, decoder, n=10, strategy="greedy"):
+    """
+    Randomly select a English sentence from the dataset and try to produce its French translation.
+    Note that you need a correct implementation of evaluate() in order to make this function work.
+    """    
+    for i in range(n):
+        pair = random.choice(pairs)
+        print('>', pair[0])
+        print('=', pair[1])
+        output_words = generate_translation(encoder, decoder, pair[0], search=strategy)
+        output_sentence = ' '.join(output_words)
+        print('<', output_sentence)
+        print('')
+
+def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
     """
     Function that generate translation.
     First, feed the source sentence into the encoder and obtain the hidden states from encoder.
@@ -340,7 +490,9 @@ def evaluate(encoder, decoder, sentence, max_length, search="greedy", k= None):
     """    
     # process input sentence
     with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence)
+        max_length = 30 # the maximum generation length is 30 
+        input_tensor = sentence # this is already tokenized to a pair so it doens't 
+        # take as long to run. 
         input_length = input_tensor.size()[0]
         # encode the source lanugage
         encoder_hidden = encoder.initHidden()
@@ -356,14 +508,11 @@ def evaluate(encoder, decoder, sentence, max_length, search="greedy", k= None):
         decoder_hidden = encoder_hidden # decoder starts from the last encoding sentence
         # output of this function
         decoder_attentions = torch.zeros(max_length, max_length)
-        decoded_words = []
+        
         if search == 'greedy':
             decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length)
         elif search == 'beam':
-            if k == None:
-                k = 2
-            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k)  
-        return decoded_wordsm_search(decoder, decoder_input, decoder_hidden, max_length)  
+            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length)  
         return decoded_words
 
 
@@ -387,24 +536,21 @@ def test_model(encoder, decoder,search, test_pairs, lang1,max_length):
         if i% 100== 0:
             print(i)
         e_input = encoder_inputs[i]
-        decoded_words = evaluate(encoder, decoder, torch.cuda.LongTensor(e_input), max_length)
+        decoded_words = evaluate(encoder, decoder, e_input, max_length)
         translated_predictions.append(" ".join(decoded_words))
+    print(translated_predictions[0])
+    print(true_labels[0])
     return calculate_bleu(translated_predictions, true_labels)
 
-input_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_elmo_zhlang")
-target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_elmo_englang")
-pairs =  load_cpickle_gc("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_indices_pairs_train")
-lengths = [len(s[0].split()) for s in pairs]
-print(max(lengths))
-
+input_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_vilang")
+target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_englang")
 hidden_size = 256
 encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
 decoder = DecoderRNN(target_lang.n_words, hidden_size).to(device)
-n_iters = 213376 # length of chinese 
-n_epochs = 3
+total_zh_en_train_pairs_length = 13376 
+n_iters = 10
+n_epochs = 10
 max_length = 530 # for chinese
 trainIters(encoder, decoder, n_iters,n_epochs, input_lang, target_lang, max_length)
-
-
 
 
