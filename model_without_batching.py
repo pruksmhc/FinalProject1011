@@ -249,16 +249,12 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, pr
                 val_losses.append(val_loss_avg)
                 plot_loss_total = 0
                 val_loss_total = 0
-       	pickle.dump(encoder, open("encoder_"+str(num_epochs), "wb"))
-	    pickle.dump(decoder, open("decoder_"+str(num_epochs), "wb"))
-	    pickle.dump(plot_loss_avg, open("training_loss", "wb"))
-	    pickle.dump(val_loss_avg, open("val_loss", "wb"))
-	    pdb.set_trace()
-	    pickle.dump(encoder, open("encoder_"+str(num_epochs), "wb"))
-	    pickle.dump(decoder, open("decoder_"+str(num_epochs), "wb"))
-	    pickle.dump(plot_loss_avg, open("training_loss", "wb"))
-	    pickle.dump(val_loss_avg, open("val_loss", "wb"))
-	    showPlot(plot_losses)
+        pickle.dump(encoder, open("encoder_"+str(num_epochs), "wb"))
+        pickle.dump(decoder, open("decoder_"+str(num_epochs), "wb"))
+        pickle.dump(plot_loss_avg, open("training_loss", "wb"))
+        pickle.dump(val_loss_avg, open("val_loss", "wb"))
+        pdb.set_trace()
+    showPlot(plot_losses)
 
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
@@ -328,7 +324,7 @@ def beam_search(decoder, decoder_input, hidden, max_length, k = 2):
     return final_translation
 
 
-def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
+def evaluate(encoder, decoder, sentence, max_length, search="greedy", k= None):
     """
     Function that generate translation.
     First, feed the source sentence into the encoder and obtain the hidden states from encoder.
@@ -344,13 +340,12 @@ def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
     """    
     # process input sentence
     with torch.no_grad():
-        input_tensor = sentence # this is already tokenized to a pair so it doens't 
-        # take as long to run. 
+        input_tensor = tensorFromSentence(input_lang, sentence)
         input_length = input_tensor.size()[0]
         # encode the source lanugage
         encoder_hidden = encoder.initHidden()
 
-        encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+        encoder_outputs = torch.zeros(input_length, encoder.hidden_size, device=device)
 
         for ei in range(input_length):
             encoder_output, encoder_hidden = encoder(input_tensor[ei],
@@ -361,13 +356,15 @@ def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
         decoder_hidden = encoder_hidden # decoder starts from the last encoding sentence
         # output of this function
         decoder_attentions = torch.zeros(max_length, max_length)
-        
+        decoded_words = []
         if search == 'greedy':
             decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length)
         elif search == 'beam':
-            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length)  
+            if k == None:
+                k = 2
+            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k)  
+        return decoded_wordsm_search(decoder, decoder_input, decoder_hidden, max_length)  
         return decoded_words
-
 
 
 import sacrebleu
