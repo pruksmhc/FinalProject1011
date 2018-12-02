@@ -336,7 +336,7 @@ def load_cpickle_gc(dirlink):
     output.close()
     return mydict
 
-def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, print_every=5000, plot_every=5000, learning_rate=3e-4, search="beam"):
+def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, max_length_generation, print_every=5000, plot_every=5000, learning_rate=3e-4, search="beam"):
     """
     lang1 is the Lang o|bject for language 1 
     Lang2 is the Lang object for language 2
@@ -374,7 +374,7 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, pr
                 print_loss_total = 0
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, iter / n_epochs),
                                              iter, iter / n_epochs * 100, print_loss_avg))
-                val_loss = test_model(encoder, decoder,search, validation_pairs, lang1, max_length)
+                val_loss = test_model(encoder, decoder,search, validation_pairs, lang1,max_length,  max_length_generation)
 
                 # retursn teh bleu score
                 print("VALIDATION BLEU SCORE: "+str(val_loss))
@@ -474,7 +474,7 @@ def evaluateRandomly(encoder, decoder, n=10, strategy="greedy"):
         print('<', output_sentence)
         print('')
 
-def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
+def evaluate(encoder, decoder, sentence,max_length,  max_length_generation, search="greedy"):
     """
     Function that generate translation.
     First, feed the source sentence into the encoder and obtain the hidden states from encoder.
@@ -490,14 +490,13 @@ def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
     """    
     # process input sentence
     with torch.no_grad():
-        max_length = 30 # the maximum generation length is 30 
         input_tensor = sentence # this is already tokenized to a pair so it doens't 
         # take as long to run. 
         input_length = input_tensor.size()[0]
         # encode the source lanugage
         encoder_hidden = encoder.initHidden()
 
-        encoder_outputs = torch.zeros(input_length, encoder.hidden_size, device=device)
+        encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
 
         for ei in range(input_length):
             encoder_output, encoder_hidden = encoder(input_tensor[ei],
@@ -510,9 +509,9 @@ def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
         decoder_attentions = torch.zeros(max_length, max_length)
         
         if search == 'greedy':
-            decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length)
+            decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length_generation)
         elif search == 'beam':
-            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length)  
+            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length_generation)  
         return decoded_words
 
 
@@ -526,7 +525,7 @@ def calculate_bleu(predictions, labels):
 	bleu = sacrebleu.raw_corpus_bleu(predictions, [labels], .01).score
 	return bleu
 
-def test_model(encoder, decoder,search, test_pairs, lang1,max_length):
+def test_model(encoder, decoder,search, test_pairs, lang1,max_length, max_length_generation):
     # for test, you only need the lang1 words to be tokenized,
     # lang2 words is the true labels
     encoder_inputs = [pair[0] for pair in test_pairs]
@@ -536,7 +535,7 @@ def test_model(encoder, decoder,search, test_pairs, lang1,max_length):
         if i% 100== 0:
             print(i)
         e_input = encoder_inputs[i]
-        decoded_words = evaluate(encoder, decoder, e_input, max_length)
+        decoded_words = evaluate(encoder, decoder, e_input, max_length, max_length_generation)
         translated_predictions.append(" ".join(decoded_words))
     print(translated_predictions[0])
     print(true_labels[0])
@@ -550,7 +549,10 @@ decoder = DecoderRNN(target_lang.n_words, hidden_size).to(device)
 total_zh_en_train_pairs_length = 13376 
 n_iters = 10
 n_epochs = 10
-max_length = 530 # for chinese
-trainIters(encoder, decoder, n_iters,n_epochs, input_lang, target_lang, max_length)
+max_length_chinese = 530 # for chinese
+max_length_viet = 759
+max_generation = 619 # the maximum number of generation for vietnamese is the maxength of english trnaslation 
+# this is the same for both 
+trainIters(encoder, decoder, n_iters,n_epochs, input_lang, target_lang, max_length_viet, max_generation)
 
 
