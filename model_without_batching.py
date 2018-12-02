@@ -207,13 +207,14 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, pr
     n_iters is the number of training pairs per epoch you want to train on
     """
     training_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1.name+"-"+lang2.name+"/preprocessed_no_indices_pairs_train_tokenized")
-    validation_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1.name+"-"+lang2.name+"/preprocessed_no_indices_pairs_validation")
+    validation_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_indices_pairs_validation_tokenized")
+
     start = time.time()
     plot_losses = []
     val_losses = []
     print_loss_total = 0  # Reset every print_every
-    plot_loss_total = 0  # Reset every plot_every
-    val_loss_total =. 0
+    plot_loss_total = 0
+    val_loss_total = 0
     encoder_optimizer = torch.optim.SGD(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = torch.optim.SGD(decoder.parameters(), lr=learning_rate)
     #training_pairs = [tensorsFromPair(pair, lang1, lang2, 0) for pair in pairs]
@@ -248,12 +249,16 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, pr
                 val_losses.append(val_loss_avg)
                 plot_loss_total = 0
                 val_loss_total = 0
-    pdb.set_trace()
-    pickle.dump(encoder, open("encoder_"+str(num_epochs), "wb"))
-    pickle.dump(decoder, open("decoder_"+str(num_epochs), "wb"))
-    pickle.dump(plot_loss_avg, open("training_loss", "wb"))
-    pickle.dump(val_loss_avg, open("val_loss", "wb"))
-    showPlot(plot_losses)
+       	pickle.dump(encoder, open("encoder_"+str(num_epochs), "wb"))
+	    pickle.dump(decoder, open("decoder_"+str(num_epochs), "wb"))
+	    pickle.dump(plot_loss_avg, open("training_loss", "wb"))
+	    pickle.dump(val_loss_avg, open("val_loss", "wb"))
+	    pdb.set_trace()
+	    pickle.dump(encoder, open("encoder_"+str(num_epochs), "wb"))
+	    pickle.dump(decoder, open("decoder_"+str(num_epochs), "wb"))
+	    pickle.dump(plot_loss_avg, open("training_loss", "wb"))
+	    pickle.dump(val_loss_avg, open("val_loss", "wb"))
+	    showPlot(plot_losses)
 
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
@@ -268,38 +273,6 @@ def showPlot(points):
     loc = ticker.MultipleLocator(base=0.2)
     ax.yaxis.set_major_locator(loc)
     plt.plot(points)
-
-
-def generate_translation(encoder, decoder, sentence, max_length, search="greedy"):
-    """ 
-    Softmax over vocabulary, and either do greedy search or beam search. 
-    
-    @param max_length: the max # of words that the decoder can return
-    @returns decoded_words: a list of words in target language
-    """    
-    with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence)
-        input_length = input_tensor.size()[0]
-        
-        # encode thae source sentence
-        encoder_hidden = encoder.initHidden()
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei],
-                                                     encoder_hidden)
-
-        # start decoding
-        decoder_input = torch.tensor([[SOS_token]], device=device)  # SOS
-        decoder_hidden = encoder_hidden
-        decoded_words = []
-        
-        if search == 'greedy':
-            decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length)
-        elif search == 'beam':
-            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length)  
-
-        return decoded_words
-
-
 
 def greedy_search(decoder, decoder_input, hidden, max_length):
     translation = []
@@ -371,7 +344,8 @@ def evaluate(encoder, decoder, sentence,max_length, search="greedy"):
     """    
     # process input sentence
     with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence, 0)
+        input_tensor = sentence # this is already tokenized to a pair so it doens't 
+        # take as long to run. 
         input_length = input_tensor.size()[0]
         # encode the source lanugage
         encoder_hidden = encoder.initHidden()
@@ -416,7 +390,7 @@ def test_model(encoder, decoder,search, test_pairs, lang1,max_length):
         if i% 100== 0:
             print(i)
         e_input = encoder_inputs[i]
-        decoded_words = evaluate(encoder, decoder, e_input, max_length)
+        decoded_words = evaluate(encoder, decoder, torch.cuda.LongTensor(e_input), max_length)
         translated_predictions.append(" ".join(decoded_words))
     return calculate_bleu(translated_predictions, true_labels)
 
