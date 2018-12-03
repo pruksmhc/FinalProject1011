@@ -354,6 +354,7 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, ma
     val_loss_total = 0
     encoder_optimizer = torch.optim.SGD(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = torch.optim.SGD(decoder.parameters(), lr=learning_rate)
+    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     #training_pairs = [tensorsFromPair(pair, lang1, lang2, 0) for pair in pairs]
     for i in range(n_epochs):
         criterion = nn.NLLLoss()
@@ -375,7 +376,7 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, ma
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, iter / n_epochs),
                                              iter, iter / n_epochs * 100, print_loss_avg))
                 val_loss = test_model(encoder, decoder,search, validation_pairs, lang1,max_length,  max_length_generation)
-
+                #scheduler.step(val_loss)
                 # retursn teh bleu score
                 print("VALIDATION BLEU SCORE: "+str(val_loss))
 
@@ -386,10 +387,11 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, ma
                 val_losses.append(val_loss_avg)
                 plot_loss_total = 0
                 val_loss_total = 0
-        pickle.dump(encoder, open("encoder_"+str(n_epochs)+str(lang1.name)+str(lang2.name), "wb"))
-        pickle.dump(decoder, open("decoder_"+str(n_epochs)+str(lang1.name)+str(lang2.name), "wb"))
-        pickle.dump(plot_loss_avg, open("training_loss"+str(lang1.name)+str(lang2.name), "wb"))
-        pickle.dump(val_loss_avg, open("val_loss"+str(lang1.name)+str(lang2.name), "wb"))
+                torch.save(encoder.state_dict(), "encoder_"+str(i)+str(iter)+str(lang1.name)+str(lang2.name))
+                torch.save(decoder.state_dict(), "decoder_"+str(i)+str(iter)+str(lang1.name)+str(lang2.name))
+                pickle.dump(plot_loss_avg, open("training_loss"+str(lang1.name)+str(lang2.name), "wb"))
+                pickle.dump(val_loss_avg, open("val_loss"+str(lang1.name)+str(lang2.name), "wb"))
+    
     showPlot(plot_losses)
 
 import matplotlib.pyplot as plt
@@ -546,6 +548,8 @@ target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocess
 hidden_size = 256
 encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
 decoder = DecoderRNN(target_lang.n_words, hidden_size).to(device)
+encoder.load_state_dict(torch.load("encoder_1055000vieng"))
+decoder.load_state_dict(torch.load("decoder_1055000vieng"))
 total_zh_en_train_pairs_length = 13376 
 n_iters = 10
 n_epochs = 10
