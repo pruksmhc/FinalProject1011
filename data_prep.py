@@ -6,20 +6,39 @@ import re
 import random
 import numpy as np
 import torch
-
+import pickle
+import _pickle as cPickle
+import gc
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-SOS_token = 0
-EOS_token = 1
+PAD_token = 0
+SOS_token = 1
+EOS_token = 2
+UNK_token = 3
 MAX_LENGTH = 30
+
+def load_cpickle_gc(dirlink):
+    # https://stackoverflow.com/questions/26860051/how-to-reduce-the-time-taken-to-load-a-pickle-file-in-python
+    output = open(dirlink, 'rb')
+
+    # disable garbage collector
+    gc.disable()
+
+    mydict = pickle.load(output)
+
+    # enable garbage collector again
+    gc.enable()
+    output.close()
+    return mydict
+
 
 class Lang:
     def __init__(self, name):
         self.name = name
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {0: "SOS", 1: "EOS", 2:"UNK"}
-        self.n_words = 3  # Count SOS and EOS
+        self.index2word = {0: PAD_token, 1: SOS_token, 2: EOS_token, 3:UNK_token}
+        self.n_words = 4  # Count SOS and EOS
 
     def addSentence(self, sentence):
         for word in sentence.split(' '):
@@ -100,7 +119,7 @@ def processReference(lang, sentence):
             current.append("UNK")
     return " ".join(current)
 
-def prepareNonTrainDataForLanguagePair(input_file_path_dev, target_file_path_dev, input_file_path_test, target_file_path_test, input_lang, target_lang,  dirlink=""):
+def prepareNonTrainDataForLanguagePair(input_file_path_dev, target_file_path_dev, input_file_path_test, target_file_path_test, input_lang, target_lang):
     # this function prepares the dataset for both balidaition adn train. 
     # input_lang and output_lang are the Lang class items  
     # dirlink is a string that takes in if you have any folders where you want to save the data. 
@@ -114,14 +133,13 @@ def prepareNonTrainDataForLanguagePair(input_file_path_dev, target_file_path_dev
         else:
             source_language = open(input_file_path_test, encoding='utf-8').read().strip().split("\n")
             target_language = open(target_file_path_test, encoding='utf-8').read().strip().split("\n")
-        if lang1 == "vi":
-            tensors_input = [tensorFromSentence(input_lang, normalizeString(s), 0) for s in source_language]
-        elif lang1 == "zh":
+        if input_lang.name== "vi":
+            tensors_input = [tensorFromSentence(input_lang, normalizeString(s)) for s in source_language]
+        elif input_lang.name == "zh":
             # don't normalize
-            tensors_input = [tensorFromSentence(input_lang,s, 0) for s in source_language]
-        reference_convert =[prepareReference(target_lang, normalizeString(s)) for s in target_language]
+            tensors_input = [tensorFromSentence(input_lang,s) for s in source_language]
+        reference_convert =[processReference(target_lang, normalizeString(s)) for s in target_language]
         final_pairs = list(zip(tensors_input, reference_convert))
-        pickle.dump(final_pairs, open(input_lang.name+"-"+target_lang.name+dataset+"_tokenized", "wb"))
         pairs.append(final_pairs)
     return pairs
 
@@ -149,7 +167,7 @@ def prepareDataInitial(lang1, lang2):
             elif lang1 == "zh":
                 # don't normalize
                 tensors_input = [tensorFromSentence(input_lang,s, 0) for s in source_language]
-            reference_convert =[prepareReference(target_lang, normalizeString(s)) for s in actual_english_test]
+            reference_convert =[processReference(target_lang, normalizeString(s)) for s in actual_english_test]
             final_pairs = list(zip(tensors_input, reference_convert))
             pdb.set_trace()
             pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_indices_pairs_"+ dataset+"_tokenized", "wb"))
@@ -158,7 +176,6 @@ def prepareData(input_file, target_file, input_lang, target_lang, size=None):
     
     input_lang, target_lang, pairs = readLangs(input_file, target_file, input_lang, target_lang, size)
     print("Read %s sentence pairs" % len(pairs))
-    pairs = filterPairs(pairs)
     print("Trimmed to %s sentence pairs" % len(pairs))
     print("Counting words...")
     print(pairs[0])
