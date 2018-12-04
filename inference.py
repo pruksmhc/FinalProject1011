@@ -85,3 +85,74 @@ def generate_translation(encoder, decoder, sentence, max_length, search="greedy"
             decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k)  
 
         return decoded_words
+
+
+
+def evaluate(encoder, decoder, sentence,max_length,  max_length_generation, search="greedy"):
+    """
+    Function that generate translation.
+    First, feed the source sentence into the encoder and obtain the hidden states from encoder.
+    Secondly, feed the hidden states into the decoder and unfold the outputs from the decoder.
+    Lastly, for each outputs from the decoder, collect the corresponding words in the target language's vocabulary.
+    And collect the attention for each output words.
+    @param encoder: the encoder network
+    @param decoder: the decoder network
+    @param sentence: string, a sentence in source language to be translated
+    @param max_length: the max # of words that the decoder can return
+    @output decoded_words: a list of words in target language
+    @output decoder_attentions: a list of vector, each of which sums up to 1.0
+    """    
+    # process input sentence
+    with torch.no_grad():
+        input_tensor = sentence # this is already tokenized to a pair so it doens't 
+        # take as long to run. 
+        input_length = input_tensor.size()[0]
+        # encode the source lanugage
+        encoder_hidden = encoder.initHidden()
+
+        encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+
+        for ei in range(input_length):
+            encoder_output, encoder_hidden = encoder(input_tensor[ei],
+                                                     encoder_hidden)
+            encoder_outputs[ei] += encoder_output[0, 0]
+        decoder_input = torch.tensor([[SOS_token]], device=device)  # SOS
+        # decode the context vector
+        decoder_hidden = encoder_hidden # decoder starts from the last encoding sentence
+        # output of this function
+        decoder_attentions = torch.zeros(max_length, max_length)
+        
+        if search == 'greedy':
+            decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length_generation)
+        elif search == 'beam':
+            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length_generation)  
+        return decoded_words
+
+
+import sacrebleu
+def calculate_bleu(predictions, labels):
+    """
+    Only pass a list of strings 
+    """
+    # tthis is ony with n_gram = 4
+
+    bleu = sacrebleu.raw_corpus_bleu(predictions, [labels], .01).score
+    return bleu
+
+def test_model(encoder, decoder,search, test_pairs, lang1,max_length, max_length_generation):
+    # for test, you only need the lang1 words to be tokenized,
+    # lang2 words is the true labels
+    encoder_inputs = [pair[0] for pair in test_pairs]
+    true_labels = [pair[1] for pair in test_pairs]
+    translated_predictions = []
+    for i in range(len(encoder_inputs)): 
+        if i% 100== 0:
+            print(i)
+        e_input = encoder_inputs[i]
+        decoded_words = evaluate(encoder, decoder, e_input, max_length, max_length_generation)
+        translated_predictions.append(" ".join(decoded_words))
+    print(translated_predictions[0])
+    print(true_labels[0])
+    return calculate_bleu(translated_predictions, true_labels)
+
+    
