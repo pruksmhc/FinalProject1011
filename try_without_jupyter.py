@@ -31,8 +31,10 @@ SOS_token = 1
 EOS_token = 2
 UNK_token = 3
 teacher_forcing_ratio = 1.0
-MAX_LENGTH = 100
-
+max_length_chinese = 530 # for chinese
+max_length_viet = 759
+max_generation = 619 
+#MAX_LENGTH = max_length_viet 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -50,8 +52,8 @@ class LanguagePairDataset(Dataset):
         """
         Triggered when you call dataset[i]
         """
-        sent1 = self.sent_pairs_list[key][0][:MAX_LENGTH]
-        sent2 = self.sent_pairs_list[key][1][:MAX_LENGTH]
+        sent1 = self.sent_pairs_list[key][0]
+        sent2 = self.sent_pairs_list[key][1]
         return [sent1, sent2, len(sent1), len(sent2)]
 
 def language_pair_dataset_collate_function(batch):
@@ -64,10 +66,13 @@ def language_pair_dataset_collate_function(batch):
     sent2_list = []
     sent2_length_list = []
     # padding
+    # NOW PAD WITH THE MAXIMUM LENGTH OF THE FIRST and second batches 
+    max_length_1 = max([len(x[0]) for x in batch])
+    max_length_2 = max([len(x[1]) for x in batch])
     for datum in batch:
-        padded_vec_1 = np.pad(np.array(datum[0]).T.squeeze(), pad_width=((0,MAX_LENGTH-len(datum[0]))), 
+        padded_vec_1 = np.pad(np.array(datum[0]).T.squeeze(), pad_width=((0,max_length_1-len(datum[0]))), 
                                 mode="constant", constant_values=PAD_token)
-        padded_vec_2 = np.pad(np.array(datum[1]).T.squeeze(), pad_width=((0,MAX_LENGTH-len(datum[1]))), 
+        padded_vec_2 = np.pad(np.array(datum[1]).T.squeeze(), pad_width=((0,max_length_2-len(datum[1]))), 
                                 mode="constant", constant_values=PAD_token)
         sent1_list.append(padded_vec_1)
         sent2_list.append(padded_vec_2)
@@ -109,12 +114,11 @@ class Encoder_Batch_RNN(nn.Module):
         # fprop though RNN
         self.hidden = self.init_hidden(batch_size)
         rnn_out, self.hidden = self.gru(embed, self.hidden)
-        
         # change the order back
         change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
         self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device)) 
         
-        # **TODO**: What is rnn_out?
+        # **TODO**: What is rnn_out - for attention. 
         return rnn_out, self.hidden
 
 class Decoder_Batch_RNN(nn.Module):
@@ -136,7 +140,7 @@ class Decoder_Batch_RNN(nn.Module):
         '''
         batch_size = sents.size()[0]
         sent_lengths = list(sent_lengths)
-        
+        # sents is the original, and try  to see if self.hidden  is the same as sents. 
         descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
         descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
         descending_lengths = np.array(descending_lengths)
@@ -161,8 +165,7 @@ class Decoder_Batch_RNN(nn.Module):
         first_hidden = hidden
         first_hidden = first_hidden.view(first_hidden.size(1), first_hidden.size(0), -1)
         
-        rnn_out = torch.cat((first_hidden, rnn_out, final_hidden), 1)
-        
+        rnn_out = torch.cat((first_hidden, rnn_out, final_hidden), 1)        
         """
 #         rnn_out = rnn_out.view(-1, rnn_out.size(2))
         output = self.softmax(self.out(rnn_out))
@@ -264,45 +267,6 @@ def generate_translation(encoder, decoder, sentence, max_length, search="greedy"
 
         return decoded_words
 
-def evaluate(encoder, decoder, sentence, search="greedy", max_length=MAX_LENGTH):
-    """
-    Function that generate translation.
-    First, feed the source sentence into the encoder and obtain the hidden states from encoder.
-    Secondly, feed the hidden states into the decoder and unfold the outputs from the decoder.
-    Lastly, for each outputs from the decoder, collect the corresponding words in the target language's vocabulary.
-    And collect the attention for each output words.
-    @param encoder: the encoder network
-    @param decoder: the decoder network
-    @param sentence: string, a sentence in source language to be translated
-    @param max_length: the max # of words that the decoder can return
-    @output decoded_words: a list of words in target language
-    @output decoder_attentions: a list of vector, each of which sums up to 1.0
-    """    
-    # process input sentence
-    with torch.no_grad():
-        input_tensor = sentence
-        input_length = input_tensor.size()[0]
-        # encode the source lanugage
-        encoder_hidden = encoder.init_hidden(1)
-
-        encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
-
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei],
-                                                     encoder_hidden)
-            encoder_outputs[ei] += encoder_output[0, 0]
-        decoder_input = torch.tensor([[SOS_token]], device=device)  # SOS
-        # decode the context vector
-        decoder_hidden = encoder_hidden # decoder starts from the last encoding sentence
-        # output of this function
-        decoder_attentions = torch.zeros(max_length, max_length)
-        
-        if search == 'greedy':
-            decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length)
-        elif search == 'beam':
-            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length)  
-        return decoded_words
-
 import sacrebleu
 def calculate_bleu(predictions, labels):
     """
@@ -314,24 +278,18 @@ def calculate_bleu(predictions, labels):
     return bleu
 
 
-
-MAX_LENGTH = 10
-def test_model(encoder, decoder, search, test_pairs, lang1, max_length=MAX_LENGTH):
+def test_model(encoder, decoder, search, test_pairs, lang1, max_length):
     # for test, you only need the lang1 words to be tokenized,
     # lang2 words is the true labels
     encoder_inputs = [pair[0] for pair in test_pairs]
     true_labels = [pair[1] for pair in test_pairs]
     translated_predictions = []
     for i in range(len(encoder_inputs)):
-        if i% 100== 0:
-            print(i)
         e_input = encoder_inputs[i]
-        decoded_words = generate_translation(encoder, decoder, e_input, search=search, max_length=MAX_LENGTH)
+        decoded_words = generate_translation(encoder, decoder, e_input, max_length, search=search)
         translated_predictions.append(" ".join(decoded_words))
     start = time.time()
-    print("bleurg")
     bleurg = calculate_bleu(translated_predictions, true_labels)
-    print(time.time() - start)
     return bleurg
 
 def save_model(encoder, decoder, val_accs, train_accs, title):
@@ -351,7 +309,7 @@ def save_model(encoder, decoder, val_accs, train_accs, title):
     fig = plt.figure()
     plt.title(title)
     # plot the title of this data. 
-    plt.plot(x_vals, train_accs.flatten(), label="Training Accuracy (NLLoss")
+    plt.plot(x_vals, train_accs.flatten(), label="Training Accuracy (NLLoss)")
     plt.plot(x_vals, val_accs.flatten(), label="Validation Accuracy (BLEU score)")
     plt.legend(loc="lower right")
     plt.ylabel("Accuracy of Model")
@@ -376,9 +334,11 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
     plot_loss_total = 0  # Reset every plot_every
     val_loss_total = 0
     plot_val_loss = 0
-    encoder_optimizer = torch.optim.Adam(encoder.parameters(), lr=learning_rate)
-    decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=learning_rate)
-    
+    encoder_optimizer = torch.optim.Adadelta(encoder.parameters(), lr=learning_rate)
+    decoder_optimizer = torch.optim.Adadelta(decoder.parameters(), lr=learning_rate)
+    encoder_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(encoder_optimizer, mode="min")
+    decoder_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(decoder_optimizer, mode="min")
+
     criterion = nn.NLLLoss(ignore_index=PAD_token) # this ignores the padded token. 
     plot_loss =[]
     val_loss = []
@@ -387,6 +347,7 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
         val_loss = []
         for step, (sent1s, sent1_lengths, sent2s, sent2_lengths) in enumerate(train_loader):
             encoder.train() # what is this for?
+            decoder.train()
             sent1_batch, sent2_batch = sent1s.to(device), sent2s.to(device) 
             sent1_length_batch, sent2_length_batch = sent1_lengths.to(device), sent2_lengths.to(device)
             
@@ -404,24 +365,27 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
             outputs, decoder_hidden = decoder(sent2_batch, sent2_length_batch, decoder_hidden)
             
             count = 1
+            # outputs should be batch_size x vocab ize 
             for i in range(len(sent2_batch)):
-
-                loss = criterion(outputs[i], sent2_batch[i])
+                loss = criterion(outputs[i], sent2_batch[i]) 
+                # critieon already averages acros all non-ignored targets above so 
+                # dont' have to average. 
+                encoder_optimizer.step()
+                decoder_optimizer.step()
                 print_loss_total += loss.item()
                 plot_loss_total += loss.item()
-                count += 1 # IS IT SUPPOSED TO BE 1? 
+                count += 1 
             # we also have tomaks when it's an eOS tag. 
             loss.backward()
             encoder_optimizer.step()
             decoder_optimizer.step()
-
             if  (step+1) % print_every == 0:
                 # lets train and polot at the same time. 
                 print_loss_avg = print_loss_total / (count)
                 print_loss_total = 0
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, step / n_epochs),
                                              step, step / n_epochs * 100, print_loss_avg))
-                v_loss = test_model(encoder, decoder, search, validation_pairs, lang1, max_length=MAX_LENGTH)
+                v_loss = test_model(encoder, decoder, search, validation_pairs, lang1, max_length=max_length_generation)
                 # returns bleu score
                 print("VALIDATION BLEU SCORE: "+str(v_loss))
                 val_loss.append(v_loss)
@@ -430,6 +394,10 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
                 plot_loss_total = 0
         plot_losses.append(plot_loss)
         val_losses.append(val_loss)
+        print("AVERAGE PLOT LOSS")
+        print(np.mean(plot_loss))
+        encoder_scheduler.step(np.mean(plot_loss)) # this isnt' really doing anything. 
+        decoder_scheduler.step(np.mean(plot_loss))
         save_model(encoder, decoder, val_losses, plot_losses, title)
     assert len(val_losses) == len(plot_losses)
     save_model(encoder, decoder, val_losses, plot_losses, title)
@@ -438,9 +406,10 @@ hidden_size = 256
 print(BATCH_SIZE)
 input_lang = pickle.load(open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_vilang", "rb"))
 target_lang = pickle.load(open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_englang", "rb"))
-train_idx_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train_tokenized")
+train_idx_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train_tokenized_sample")
 val_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_validation_tokenized")
 train_dataset = LanguagePairDataset(train_idx_pairs)
+# is there anything in the train_idx_pairs that is only 0s right noww instea dof padding. 
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset, 
                                            batch_size=BATCH_SIZE, 
                                            collate_fn=language_pair_dataset_collate_function,
@@ -448,10 +417,9 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
 
 encoder1 = Encoder_Batch_RNN(input_lang.n_words, hidden_size).to(device)
 decoder1 = Decoder_Batch_RNN(target_lang.n_words, hidden_size).to(device)
-
 args = {
     'n_epochs': 10,
-    'learning_rate': 0.001,
+    'learning_rate': 0.0001,
     'search': 'beam',
     'encoder': encoder1,
     'decoder': decoder1,
@@ -459,10 +427,17 @@ args = {
     'lang2': target_lang,
     "pairs":train_idx_pairs, 
     "validation_pairs": val_pairs, 
-    "title": "Training Curve for Basic 1-Directional Encoder Decoder Model",
-    "max_length_generation": 20
+    "title": "Training Curve for Basic 1-Directional Encoder Decoder Model With LR = 0.0001",
+    "max_length_generation": 20, 
+    "plot_every": 10, 
+    "print_every": 10
 }
 
+"""
+We follow https://arxiv.org/pdf/1406.1078.pdf 
+and use the Adadelta optimizer
+
+"""
 print(BATCH_SIZE)
 
 trainIters(**args)
