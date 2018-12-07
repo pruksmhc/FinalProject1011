@@ -81,6 +81,151 @@ def language_pair_dataset_collate_function(batch):
     return [torch.from_numpy(np.array(sent1_list)), torch.cuda.LongTensor(sent1_length_list), 
             torch.from_numpy(np.array(sent2_list)), torch.cuda.LongTensor(sent2_length_list)]
 #train_idx_pairs = load_cpickle_gc("train_vi_en_idx_pairs")
+class EncoderRNNBidirectionalBatch(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(EncoderRNNBidirectionalBatch, self).__init__()
+        self.hidden_size = hidden_size
+        self.embedding = nn.Embedding(input_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size, bidirectional=True, dropout=0.1)
+
+    def forward(self, sents, sent_lengths):
+        batch_size = sents.size()[0]
+        sent_lengths = list(sent_lengths)
+        # We sort and then do pad packed sequence here. 
+        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_lengths = np.array(descending_lengths)
+        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+        
+        # get embedding
+        embed = self.embedding(descending_sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
+        
+        # fprop though RNN
+        self.hidden = self.init_hidden(batch_size)
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        # change the order back
+        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device)) 
+        return rnn_out, self.hidden
+
+    def init_hidden(self, batch_size):
+        return torch.zeros(2, batch_size, self.hidden_size, device=device)
+
+
+class DecoderRNNBidirectionalBatch(nn.Module):
+    def __init__(self, output_size, hidden_size):
+        super(DecoderRNNBidirectionalBatch, self).__init__()
+        self.hidden_size = hidden_size*2
+        self.output_size = output_size
+        self.embedding = nn.Embedding(output_size, hidden_size*2)
+        self.gru = nn.GRU(hidden_size*2,  hidden_size*2 , dropout=0.2)
+        self.out = nn.Linear(hidden_size*2, hidden_size*4) # sincec output_size >> hidden_size, we increase 
+        self.out2 = nn.Linear(hidden_size*4, output_size)
+        self.softmax = nn.LogSoftmax(dim=1)
+        self.leaky =  torch.nn.LeakyReLU()
+
+    def forward(self, sents, sent_lengths, hidden):
+        batch_size = sents.size()[0]
+        sent_lengths = list(sent_lengths)
+        # sents is the original, and try  to see if self.hidden  is the same as sents. 
+        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_lengths = np.array(descending_lengths)
+        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+        
+        # get embedding
+        embed = self.embedding(descending_sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
+        
+        # fprop though RNN
+        self.hidden = hidden
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        
+        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
+        rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
+        output = self.leaky(self.out(rnn_out))
+        output = self.softmax(self.out2(output))
+        return output, self.hidden
+
+    def init_hidden(self, batch_size):
+        return torch.zeros(2, batch_size, self.hidden_size, device=device)
+
+class EncoderRNNBidirectionalBatch(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(EncoderRNNBidirectionalBatch, self).__init__()
+        self.hidden_size = hidden_size
+        self.embedding = nn.Embedding(input_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size, bidirectional=True, dropout=0.1)
+
+    def forward(self, sents, sent_lengths):
+        batch_size = sents.size()[0]
+        sent_lengths = list(sent_lengths)
+        # We sort and then do pad packed sequence here. 
+        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_lengths = np.array(descending_lengths)
+        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+        
+        # get embedding
+        embed = self.embedding(descending_sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
+        
+        # fprop though RNN
+        self.hidden = self.init_hidden(batch_size)
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        # change the order back
+        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device)) 
+        return rnn_out, self.hidden
+
+    def init_hidden(self, batch_size):
+        return torch.zeros(2, batch_size, self.hidden_size, device=device)
+
+
+class DecoderRNNBidirectionalBatch(nn.Module):
+    def __init__(self, output_size, hidden_size):
+        super(DecoderRNNBidirectionalBatch, self).__init__()
+        self.hidden_size = hidden_size*2
+        self.output_size = output_size
+        self.embedding = nn.Embedding(output_size, hidden_size*2)
+        self.gru = nn.GRU(hidden_size*2,  hidden_size*2 , dropout=0.2)
+        self.out = nn.Linear(hidden_size*2, hidden_size*4) # sincec output_size >> hidden_size, we increase 
+        self.out2 = nn.Linear(hidden_size*4, output_size)
+        self.softmax = nn.LogSoftmax(dim=1)
+        self.leaky =  torch.nn.LeakyReLU()
+
+    def forward(self, sents, sent_lengths, hidden):
+        batch_size = sents.size()[0]
+        sent_lengths = list(sent_lengths)
+        # sents is the original, and try  to see if self.hidden  is the same as sents. 
+        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_lengths = np.array(descending_lengths)
+        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+        
+        # get embedding
+        embed = self.embedding(descending_sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
+        
+        # fprop though RNN
+        self.hidden = hidden
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        
+        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
+        rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
+        output = self.leaky(self.out(rnn_out))
+        output = self.softmax(self.out2(output))
+        return output, self.hidden
+
+    def init_hidden(self, batch_size):
+        return torch.zeros(2, batch_size, self.hidden_size, device=device)
 
 class Encoder_Batch_RNN(nn.Module):
     def __init__(self, input_size, hidden_size):
@@ -170,7 +315,7 @@ class Decoder_Batch_RNN(nn.Module):
 #         rnn_out = rnn_out.view(-1, rnn_out.size(2))
         output = self.softmax(self.out(rnn_out))
         # now output is the size 28 by 31257 (vocab size)
-        return output, hidden
+        return output, self.hidden
 
 def indexesFromSentence(lang, sentence):
     words = sentence.split(' ')
@@ -185,8 +330,7 @@ def indexesFromSentence(lang, sentence):
 def tensorFromSentence(lang, sentence):
     indexes = indexesFromSentence(lang, sentence)
     indexes.append(EOS_token)
-    return torch.tensor(indexes, dtype=torch.long, device=device).view(-1, 1)
-
+  
 def greedy_search(decoder, decoder_input, hidden, max_length):
     translation = []
     for i in range(max_length):
@@ -203,13 +347,10 @@ def greedy_search(decoder, decoder_input, hidden, max_length):
     return translation
 
 
-
 def beam_search(decoder, decoder_input, hidden, max_length, k):
-    
-    candidates = [(decoder_input, 0, hidden)]
+    candidates = [(decoder_input, 1, hidden)]
     potential_candidates = []
     completed_translations = []
-
     # put a cap on the length of generated sentences
     for m in range(max_length):
         for c in candidates:
@@ -218,19 +359,24 @@ def beam_search(decoder, decoder_input, hidden, max_length, k):
             c_score = c[1]
             c_hidden = c[2]
             # EOS token
-            if c_sequence[-1] == 1:
+            if c_sequence[-1] == EOS_token:
                 completed_translations.append((c_sequence, c_score))
                 k = k - 1
             else:
-                next_word_probs, hidden = decoder(c_sequence[-1], c_hidden)
+                next_word_probs, hidden = decoder(torch.cuda.LongTensor([c_sequence[-1]]).view(1, 1), torch.cuda.LongTensor([1]),torch.cuda.FloatTensor(c_hidden)) 
+                s = next_word_probs.size()
+                # 1 x 3 x 256
+                #pdb.set_trace()
+                #next_word_probs = next_word_probs[0, 2, :]
                 # in the worst-case, one sequence will have the highest k probabilities
                 # so to save computation, only grab the k highest_probability from each candidate sequence
                 top_probs, top_idx = torch.topk(next_word_probs, k)
-                for i in range(len(top_probs[0])):
-                    word = torch.from_numpy(np.array([top_idx[0][i]]).reshape(1, 1)).to(device)
-                    new_score = c_score + top_probs[0][i]
+                # 1 x 1 x k right now. 
+                # check that beam search actually works the way we think it is working. 
+                for i in range(len(top_probs)):
+                    word = torch.from_numpy(np.array(top_idx[0][0][i]).reshape(1, 1)).to(device)
+                    new_score = c_score + top_probs[i]
                     potential_candidates.append((torch.cat((c_sequence, word)).to(device), new_score, hidden))
-
         candidates = sorted(potential_candidates, key= lambda x: x[1], reverse=True)[0:k] 
         potential_candidates = []
 
@@ -261,8 +407,8 @@ def generate_translation(encoder, decoder, sentence, max_length, search="greedy"
         if search == 'greedy':
             decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length)
         elif search == 'beam':
-            if k is None:
-                k = 2 # since k = 2 preforms badly
+            if k == None:
+                k = 5 # since k = 2 preforms badly
             decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k)  
 
         return decoded_words
@@ -289,6 +435,8 @@ def test_model(encoder, decoder, search, test_pairs, lang1, max_length):
         decoded_words = generate_translation(encoder, decoder, e_input, max_length, search=search)
         translated_predictions.append(" ".join(decoded_words))
     start = time.time()
+    print(translated_predictions[0])
+    print(true_labels[0])
     bleurg = calculate_bleu(translated_predictions, true_labels)
     return bleurg
 
@@ -336,8 +484,8 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
     plot_val_loss = 0
     encoder_optimizer = torch.optim.Adadelta(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = torch.optim.Adadelta(decoder.parameters(), lr=learning_rate)
-    encoder_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(encoder_optimizer, mode="min")
-    decoder_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(decoder_optimizer, mode="min")
+    #encoder_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(encoder_optimizer, mode="min")
+    #decoder_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(decoder_optimizer, mode="min")
 
     criterion = nn.NLLLoss(ignore_index=PAD_token) # this ignores the padded token. 
     plot_loss =[]
@@ -367,38 +515,38 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
             count = 1
             # outputs should be batch_size x vocab ize 
             for i in range(len(sent2_batch)):
-                loss = criterion(outputs[i], sent2_batch[i]) 
+                new_loss = criterion(outputs[i], sent2_batch[i]) 
+                loss += new_loss
                 # critieon already averages acros all non-ignored targets above so 
-                # dont' have to average. 
-                encoder_optimizer.step()
-                decoder_optimizer.step()
-                print_loss_total += loss.item()
-                plot_loss_total += loss.item()
+                # dont' have to average.
+                print_loss_total += new_loss.item()
+                plot_loss_total += new_loss.item()
                 count += 1 
-            # we also have tomaks when it's an eOS tag. 
             loss.backward()
             encoder_optimizer.step()
             decoder_optimizer.step()
+            # we also have tomaks when it's an eOS tag. 
             if  (step+1) % print_every == 0:
                 # lets train and polot at the same time. 
                 print_loss_avg = print_loss_total / (count)
                 print_loss_total = 0
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, step / n_epochs),
                                              step, step / n_epochs * 100, print_loss_avg))
-                v_loss = test_model(encoder, decoder, search, validation_pairs, lang1, max_length=max_length_generation)
+                #v_loss = test_model(encoder, decoder, search, validation_pairs, lang1, max_length=max_length_generation)
                 # returns bleu score
-                print("VALIDATION BLEU SCORE: "+str(v_loss))
-                val_loss.append(v_loss)
+                #print("VALIDATION BLEU SCORE: "+str(v_loss))
+                #val_loss.append(v_loss)
                 plot_loss_avg = plot_loss_total / plot_every
                 plot_loss.append(plot_loss_avg)
                 plot_loss_total = 0
+
         plot_losses.append(plot_loss)
         val_losses.append(val_loss)
         print("AVERAGE PLOT LOSS")
         print(np.mean(plot_loss))
-        encoder_scheduler.step(np.mean(plot_loss)) # this isnt' really doing anything. 
-        decoder_scheduler.step(np.mean(plot_loss))
-        save_model(encoder, decoder, val_losses, plot_losses, title)
+        #encoder_scheduler.step(np.mean(plot_loss)) # this isnt' really doing anything. 
+        #decoder_scheduler.step(np.mean(plot_loss))
+        #save_model(encoder, decoder, val_losses, plot_losses, title)
     assert len(val_losses) == len(plot_losses)
     save_model(encoder, decoder, val_losses, plot_losses, title)
 
@@ -419,7 +567,7 @@ encoder1 = Encoder_Batch_RNN(input_lang.n_words, hidden_size).to(device)
 decoder1 = Decoder_Batch_RNN(target_lang.n_words, hidden_size).to(device)
 args = {
     'n_epochs': 10,
-    'learning_rate': 0.0001,
+    'learning_rate': 0.001,
     'search': 'beam',
     'encoder': encoder1,
     'decoder': decoder1,
