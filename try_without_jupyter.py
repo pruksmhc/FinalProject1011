@@ -404,7 +404,6 @@ def test_model(encoder, decoder, search, test_pairs, lang2, max_length):
     true_labels = [pair[1] for pair in test_pairs]
     translated_predictions = []
     for i in range(len(encoder_inputs)):
-        for i % 50 == 0:
         e_input = encoder_inputs[i]
         decoded_words = generate_translation(encoder, decoder, e_input, max_length, lang2, search=search)
         translated_predictions.append(" ".join(decoded_words))
