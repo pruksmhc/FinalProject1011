@@ -91,7 +91,7 @@ class DecoderRNNBidirectionalBatchWithAttenntion(nn.Module):
         self.gru = nn.GRU(hidden_size*2,  hidden_size*2 , dropout=0.2)
         self.out = nn.Linear(hidden_size*2, hidden_size*4) # sincec output_size >> hidden_size, we increase 
         self.out2 = nn.Linear(hidden_size*4, output_size)
-        self.softmax = nn.LogSoftmax(dim=1)
+        self.softmax = nn.LogSoftmax(dim=2)
         self.leaky =  torch.nn.LeakyReLU()
         self.attn = nn.Linear(self.hidden_size * 2, self.max_length)
         self.attn_combine = nn.Linear(self.hidden_size * 2, self.hidden_size)
@@ -115,7 +115,7 @@ class DecoderRNNBidirectionalBatchWithAttenntion(nn.Module):
         # here, we make the attention weights based on the encoder_outputs and the current 
         # inputs, which is equal to y1, y2,...yn in the  traget language because 
         # we pass in the whole batch. 
-        attn_weights = F.softmax(self.attn(torch.cat((embedded, encoder_outputs), 1)), dim=1)
+        attn_weights = F.softmax(self.attn(torch.cat((embedded, encoder_outputs), 1)), dim=2)
         # sum h_ialpha_i 
         attn_applied = torch.bmm(attn_weights.unsqueeze(0),
                                  encoder_outputs.unsqueeze(0))
