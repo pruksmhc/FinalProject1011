@@ -80,6 +80,133 @@ def language_pair_dataset_collate_function(batch):
         sent2_length_list.append(len(datum[1]))
     return [torch.from_numpy(np.array(sent1_list)), torch.cuda.LongTensor(sent1_length_list), 
             torch.from_numpy(np.array(sent2_list)), torch.cuda.LongTensor(sent2_length_list)]
+
+class EncoderRNNBidirectionalBatch(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(EncoderRNNBidirectionalBatch, self).__init__()
+        self.hidden_size = hidden_size
+        self.embedding = nn.Embedding(input_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size, bidirectional=True, dropout=0.1)
+
+    def forward(self, sents, sent_lengths):
+        batch_size = sents.size()[0]
+        sent_lengths = list(sent_lengths)
+        # We sort and then do pad packed sequence here. 
+        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_lengths = np.array(descending_lengths)
+        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+        
+        # get embedding
+        embed = self.embedding(descending_sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
+        
+        # fprop though RNN
+        self.hidden = self.init_hidden(batch_size)
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        # change the order back
+        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device)) 
+        return rnn_out, self.hidden
+
+    def init_hidden(self, batch_size):
+        return torch.zeros(2, batch_size, self.hidden_size, device=device)
+
+class DecoderRNNBidirectionalBatch(nn.Module):
+    def __init__(self, output_size, hidden_size):
+        super(DecoderRNNBidirectionalBatch, self).__init__()
+        self.hidden_size = hidden_size*2
+        self.output_size = output_size
+        self.embedding = nn.Embedding(output_size, hidden_size*2)
+        self.gru = nn.GRU(hidden_size*2,  hidden_size*2 , dropout=0.2)
+        self.out = nn.Linear(hidden_size*2, hidden_size*4) # sincec output_size >> hidden_size, we increase 
+        self.out2 = nn.Linear(hidden_size*4, output_size)
+        self.softmax = nn.LogSoftmax(dim=1)
+        self.leaky =  torch.nn.LeakyReLU()
+
+    def forward(self, sents, sent_lengths, hidden):
+        batch_size = sents.size()[0]
+        sent_lengths = list(sent_lengths)
+        # sents is the original, and try  to see if self.hidden  is the same as sents. 
+        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_lengths = np.array(descending_lengths)
+        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+        
+        # get embedding
+        embed = self.embedding(descending_sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
+        
+        # fprop though RNN
+        self.hidden = hidden
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        
+        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
+        rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
+        output = self.leaky(self.out(rnn_out))
+        output = self.softmax(self.out2(output))
+        return output, self.hidden
+
+    def init_hidden(self, batch_size):
+        return torch.zeros(2, batch_size, self.hidden_size, device=device)
+
+
+class DecoderRNNBidirectionalBatchWithAttenntion(nn.Module):
+    def __init__(self, output_size, hidden_size):
+        super(DecoderRNNBidirectionalBatch, self).__init__()
+        self.hidden_size = hidden_size*2
+        self.output_size = output_size
+        self.embedding = nn.Embedding(output_size, hidden_size*2)
+        self.gru = nn.GRU(hidden_size*2,  hidden_size*2 , dropout=0.2)
+        self.out = nn.Linear(hidden_size*2, hidden_size*4) # sincec output_size >> hidden_size, we increase 
+        self.out2 = nn.Linear(hidden_size*4, output_size)
+        self.softmax = nn.LogSoftmax(dim=1)
+        self.leaky =  torch.nn.LeakyReLU()
+        self.attn = nn.Linear(self.hidden_size * 2, self.max_length)
+        self.attn_combine = nn.Linear(self.hidden_size * 2, self.hidden_size)
+
+
+    def forward(self, sents, sent_lengths, hidden, encoder_ouputs):
+
+        batch_size = sents.size()[0]
+        sent_lengths = list(sent_lengths)
+        # sents is the original, and try  to see if self.hidden  is the same as sents. 
+        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+        descending_lengths = np.array(descending_lengths)
+        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+        
+        # get embedding
+        embed = self.embedding(descending_sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
+        
+        # here, we make the attention weights based on the encoder_outputs and the current 
+        # inputs, which is equal to y1, y2,...yn in the  traget language because 
+        # we pass in the whole batch. 
+        attn_weights = F.softmax(self.attn(torch.cat((embedded, encoder_outputs), 1)), dim=1)
+        # sum h_ialpha_i 
+        attn_applied = torch.bmm(attn_weights.unsqueeze(0),
+                                 encoder_outputs.unsqueeze(0))
+        # now this is the context vector, which takes the place of the hidden 
+        # state in the no-attention case.
+        # and then we go through the rest of this decoder like we do without attention.  
+        self.hidden =attn_applied 
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        
+        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
+        rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
+        output = self.leaky(self.out(rnn_out))
+        output = self.softmax(self.out2(output))
+        return output, self.hidden
+
+    def init_hidden(self, batch_size):
+        return torch.zeros(2, batch_size, self.hidden_size, device=device)
+
 #train_idx_pairs = load_cpickle_gc("train_vi_en_idx_pairs")
 class EncoderRNNBidirectionalBatch(nn.Module):
     def __init__(self, input_size, hidden_size):
@@ -153,6 +280,9 @@ class DecoderRNNBidirectionalBatch(nn.Module):
 
     def init_hidden(self, batch_size):
         return torch.zeros(2, batch_size, self.hidden_size, device=device)
+
+class EncoderRNNBidirectionalBatch(nn.Modeul):
+    def __init__(self, input_size, hidden_size):
 
 class EncoderRNNBidirectionalBatch(nn.Module):
     def __init__(self, input_size, hidden_size):
@@ -347,7 +477,7 @@ def greedy_search(decoder, decoder_input, hidden, max_length):
     return translation
 
 
-def beam_search(decoder, decoder_input, hidden, max_length, k):
+def beam_search(decoder, decoder_input, hidden, max_length, k, target_lang):
     candidates = [(decoder_input, 1, hidden)]
     potential_candidates = []
     completed_translations = []
@@ -367,7 +497,7 @@ def beam_search(decoder, decoder_input, hidden, max_length, k):
                 s = next_word_probs.size()
                 # 1 x 3 x 256
                 #pdb.set_trace()
-                #next_word_probs = next_word_probs[0, 2, :]
+                next_word_probs = next_word_probs[0, 2, :]
                 # in the worst-case, one sequence will have the highest k probabilities
                 # so to save computation, only grab the k highest_probability from each candidate sequence
                 top_probs, top_idx = torch.topk(next_word_probs, k)
@@ -387,7 +517,7 @@ def beam_search(decoder, decoder_input, hidden, max_length, k):
         final_translation.append(target_lang.index2word[x.squeeze().item()])
     return final_translation
 
-def generate_translation(encoder, decoder, sentence, max_length, search="greedy", k = None):
+def generate_translation(encoder, decoder, sentence, max_length, target_lang, search="greedy", k = None):
     """ 
     @param max_length: the max # of words that the decoder can return
     @returns decoded_words: a list of words in target language
@@ -409,7 +539,7 @@ def generate_translation(encoder, decoder, sentence, max_length, search="greedy"
         elif search == 'beam':
             if k == None:
                 k = 5 # since k = 2 preforms badly
-            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k)  
+            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k, target_lang)  
 
         return decoded_words
 
@@ -424,7 +554,7 @@ def calculate_bleu(predictions, labels):
     return bleu
 
 
-def test_model(encoder, decoder, search, test_pairs, lang1, max_length):
+def test_model(encoder, decoder, search, test_pairs, lang2, max_length):
     # for test, you only need the lang1 words to be tokenized,
     # lang2 words is the true labels
     encoder_inputs = [pair[0] for pair in test_pairs]
@@ -432,7 +562,7 @@ def test_model(encoder, decoder, search, test_pairs, lang1, max_length):
     translated_predictions = []
     for i in range(len(encoder_inputs)):
         e_input = encoder_inputs[i]
-        decoded_words = generate_translation(encoder, decoder, e_input, max_length, search=search)
+        decoded_words = generate_translation(encoder, decoder, e_input, max_length, lang2, search=search)
         translated_predictions.append(" ".join(decoded_words))
     start = time.time()
     print(translated_predictions[0])
@@ -510,25 +640,26 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
             use_teacher_forcing = True
             
             loss = 0
+            count = 0
             outputs, decoder_hidden = decoder(sent2_batch, sent2_length_batch, decoder_hidden)
             
-            count = 1
             # outputs should be batch_size x vocab ize 
             for i in range(len(sent2_batch)):
-                new_loss = criterion(outputs[i], sent2_batch[i]) 
-                loss += new_loss
-                # critieon already averages acros all non-ignored targets above so 
-                # dont' have to average.
-                print_loss_total += new_loss.item()
-                plot_loss_total += new_loss.item()
-                count += 1 
+                l = sent2_length_batch[i]
+                for j in range(l):
+                    o = outputs[i][j].view(1, -1)
+                    s = torch.tensor([sent2_batch[i][j]]).to(device)
+                    loss += criterion(o, s) # this will ignore if s is "EOS"
+                    count += 1
+            print_loss_total += loss.item()
+            plot_loss_total += loss.item()
             loss.backward()
             encoder_optimizer.step()
             decoder_optimizer.step()
             # we also have tomaks when it's an eOS tag. 
-            if  (step+1) % print_every == 0:
+            if (step+1) % print_every == 0:
                 # lets train and polot at the same time. 
-                print_loss_avg = print_loss_total / (count)
+                print_loss_avg = print_loss_total / count
                 print_loss_total = 0
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, step / n_epochs),
                                              step, step / n_epochs * 100, print_loss_avg))
