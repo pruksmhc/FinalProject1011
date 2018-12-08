@@ -178,7 +178,7 @@ class DecoderRNNBidirectionalBatch(nn.Module):
         self.gru = nn.GRU(hidden_size*2,  hidden_size*2 , dropout=0.2)
         self.out = nn.Linear(hidden_size*2, hidden_size*4) # sincec output_size >> hidden_size, we increase 
         self.out2 = nn.Linear(hidden_size*4, output_size)
-        self.softmax = nn.LogSoftmax(dim=1)
+        self.softmax = nn.LogSoftmax(dim=2)
         self.leaky =  torch.nn.LeakyReLU()
 
     def forward(self, sents, sent_lengths, hidden):
@@ -258,7 +258,7 @@ class Decoder_Batch_RNN(nn.Module):
         self.embedding = nn.Embedding(output_size, hidden_size)
         self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
         self.out = nn.Linear(hidden_size, output_size)
-        self.softmax = nn.LogSoftmax(dim=1)
+        self.softmax = nn.LogSoftmax(dim=2)
         
     def init_hidden(self, batch_size):
         return torch.zeros(1, batch_size, self.hidden_size, device=device)
@@ -287,16 +287,6 @@ class Decoder_Batch_RNN(nn.Module):
         change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
         self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
         rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
-        # rnn_out is batch_size x 28 x 256
-        """      
-        final_hidden = self.hidden
-        final_hidden = final_hidden.view(final_hidden.size(1), final_hidden.size(0), -1)
-        first_hidden = hidden
-        first_hidden = first_hidden.view(first_hidden.size(1), first_hidden.size(0), -1)
-        
-        rnn_out = torch.cat((first_hidden, rnn_out, final_hidden), 1)        
-        """
-#         rnn_out = rnn_out.view(-1, rnn_out.size(2))
         output = self.softmax(self.out(rnn_out))
         # now output is the size 28 by 31257 (vocab size)
         return output, self.hidden
@@ -332,9 +322,11 @@ def greedy_search(decoder, decoder_input, hidden, max_length):
 
 
 def beam_search(decoder, decoder_input, hidden, max_length, k, target_lang):
-    candidates = [(decoder_input, 1, hidden)]
+    
+    candidates = [(decoder_input, 0, hidden)]
     potential_candidates = []
     completed_translations = []
+
     # put a cap on the length of generated sentences
     for m in range(max_length):
         for c in candidates:
@@ -347,20 +339,16 @@ def beam_search(decoder, decoder_input, hidden, max_length, k, target_lang):
                 completed_translations.append((c_sequence, c_score))
                 k = k - 1
             else:
-                next_word_probs, hidden = decoder(torch.cuda.LongTensor([c_sequence[-1]]).view(1, 1), torch.cuda.LongTensor([1]),torch.cuda.FloatTensor(c_hidden)) 
-                s = next_word_probs.size()
-                # 1 x 3 x 256
-                #pdb.set_trace()
-                next_word_probs = next_word_probs[0, 2, :]
+                next_word_probs, hidden = decoder(torch.cuda.LongTensor([c_sequence[-1]]).view(1, 1), torch.cuda.LongTensor([1]),torch.cuda.FloatTensor(c_hidden))
+                next_word_probs = next_word_probs[0]
                 # in the worst-case, one sequence will have the highest k probabilities
                 # so to save computation, only grab the k highest_probability from each candidate sequence
                 top_probs, top_idx = torch.topk(next_word_probs, k)
-                # 1 x 1 x k right now. 
-                # check that beam search actually works the way we think it is working. 
-                for i in range(len(top_probs)):
-                    word = torch.from_numpy(np.array(top_idx[0][0][i]).reshape(1, 1)).to(device)
-                    new_score = c_score + top_probs[i]
+                for i in range(len(top_probs[0])):
+                    word = torch.from_numpy(np.array([top_idx[0][i]]).reshape(1, 1)).to(device)
+                    new_score = c_score + top_probs[0][i]
                     potential_candidates.append((torch.cat((c_sequence, word)).to(device), new_score, hidden))
+
         candidates = sorted(potential_candidates, key= lambda x: x[1], reverse=True)[0:k] 
         potential_candidates = []
 
@@ -370,6 +358,7 @@ def beam_search(decoder, decoder_input, hidden, max_length, k, target_lang):
     for x in completed[0]:
         final_translation.append(target_lang.index2word[x.squeeze().item()])
     return final_translation
+
 
 def generate_translation(encoder, decoder, sentence, max_length, target_lang, search="greedy", k = None):
     """ 
@@ -415,6 +404,7 @@ def test_model(encoder, decoder, search, test_pairs, lang2, max_length):
     true_labels = [pair[1] for pair in test_pairs]
     translated_predictions = []
     for i in range(len(encoder_inputs)):
+        for i % 50 == 0:
         e_input = encoder_inputs[i]
         decoded_words = generate_translation(encoder, decoder, e_input, max_length, lang2, search=search)
         translated_predictions.append(" ".join(decoded_words))
@@ -462,6 +452,7 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
     start = time.time()
     plot_losses = []
     val_losses = [] 
+    count = 0 
     print_loss_total = 0  # Reset every print_every
     plot_loss_total = 0  # Reset every plot_every
     val_loss_total = 0
@@ -494,10 +485,8 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
             use_teacher_forcing = True
             
             loss = 0
-            count = 0
             outputs, decoder_hidden = decoder(sent2_batch, sent2_length_batch, decoder_hidden)
-            
-            # outputs should be batch_size x vocab ize 
+                        # outputs should be batch_size x vocab ize 
             for i in range(len(sent2_batch)):
                 l = sent2_length_batch[i]
                 for j in range(l):
@@ -512,17 +501,18 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
             decoder_optimizer.step()
             # we also have tomaks when it's an eOS tag. 
             if (step+1) % print_every == 0:
+                print(print_loss_total)
                 # lets train and polot at the same time. 
                 print_loss_avg = print_loss_total / count
+                count = 0
                 print_loss_total = 0
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, step / n_epochs),
                                              step, step / n_epochs * 100, print_loss_avg))
-                #v_loss = test_model(encoder, decoder, search, validation_pairs, lang1, max_length=max_length_generation)
+                v_loss = test_model(encoder, decoder, search, validation_pairs, lang2, max_length=max_length_generation)
                 # returns bleu score
-                #print("VALIDATION BLEU SCORE: "+str(v_loss))
-                #val_loss.append(v_loss)
-                plot_loss_avg = plot_loss_total / plot_every
-                plot_loss.append(plot_loss_avg)
+                print("VALIDATION BLEU SCORE: "+str(v_loss))
+                val_loss.append(v_loss)
+                plot_loss.append(print_loss_avg)
                 plot_loss_total = 0
 
         plot_losses.append(plot_loss)
@@ -559,7 +549,7 @@ args = {
     'lang1': input_lang, 
     'lang2': target_lang,
     "pairs":train_idx_pairs, 
-    "validation_pairs": val_pairs, 
+    "validation_pairs": val_pairs[:200], 
     "title": "Training Curve for Basic 1-Directional Encoder Decoder Model With LR = 0.0001",
     "max_length_generation": 20, 
     "plot_every": 10, 
