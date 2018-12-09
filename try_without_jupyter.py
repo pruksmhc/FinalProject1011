@@ -19,7 +19,6 @@ plt.switch_backend('agg')
 
 from model_architectures import Encoder_RNN, Decoder_RNN
 from data_prep import prepareData, tensorsFromPair, prepareNonTrainDataForLanguagePair, load_cpickle_gc
-from inference import generate_translation
 from misc import timeSince, load_cpickle_gc
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -263,30 +262,34 @@ class Decoder_Batch_RNN(nn.Module):
     def init_hidden(self, batch_size):
         return torch.zeros(1, batch_size, self.hidden_size, device=device)
 
-    def forward(self, sents, sent_lengths, hidden):
+    def forward(self, sents, sent_lengths, hidden, train=True):
         '''
         For evaluate, you compute [batch_size x ] [[1]]
         '''
         batch_size = sents.size()[0]
         sent_lengths = list(sent_lengths)
-        # sents is the original, and try  to see if self.hidden  is the same as sents. 
-        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
-        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
-        descending_lengths = np.array(descending_lengths)
-        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
-        
+        if train:
+            # sents is the original, and try  to see if self.hidden  is the same as sents. 
+            descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+            descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
+            descending_lengths = np.array(descending_lengths)
+            descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
+            sents = descending_sents  
         # get embedding
-        embed = self.embedding(descending_sents)
+        embed = self.embedding(sents)
         # pack padded sequence
-        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
-        
+        if train:
+            embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
         # fprop though RNN
         self.hidden = hidden
         rnn_out, self.hidden = self.gru(embed, self.hidden)
-        
-        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
-        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
-        rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
+        if train:
+            change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
+            self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
+            rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
+            # this basically pads it back, and then we have to actually get to the right order. 
+            # 0th dimension since rnn_out is of size 32. 
+            rnn_out = torch.index_select(rnn_out, 0, torch.LongTensor(change_it_back).to(device))
         output = self.softmax(self.out(rnn_out))
         # now output is the size 28 by 31257 (vocab size)
         return output, self.hidden
@@ -308,7 +311,8 @@ def tensorFromSentence(lang, sentence):
 def greedy_search(decoder, decoder_input, hidden, max_length):
     translation = []
     for i in range(max_length):
-        next_word_softmax, hidden = decoder(decoder_input, hidden)
+        next_word_probs, hidden = decoder(torch.cuda.LongTensor([c_sequence[-1]]).view(1, 1), torch.cuda.LongTensor([1]),torch.cuda.FloatTensor(c_hidden), train=False)
+        pdb.set_trace()
         best_idx = torch.max(next_word_softmax, 1)[1].squeeze().item()
 
         # convert idx to word
@@ -339,7 +343,7 @@ def beam_search(decoder, decoder_input, hidden, max_length, k, target_lang):
                 completed_translations.append((c_sequence, c_score))
                 k = k - 1
             else:
-                next_word_probs, hidden = decoder(torch.cuda.LongTensor([c_sequence[-1]]).view(1, 1), torch.cuda.LongTensor([1]),torch.cuda.FloatTensor(c_hidden))
+                next_word_probs, hidden = decoder(torch.cuda.LongTensor([c_sequence[-1]]).view(1, 1), torch.cuda.LongTensor([1]),torch.cuda.FloatTensor(c_hidden), train=False)
                 next_word_probs = next_word_probs[0]
                 # in the worst-case, one sequence will have the highest k probabilities
                 # so to save computation, only grab the k highest_probability from each candidate sequence
@@ -500,7 +504,6 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
             decoder_optimizer.step()
             # we also have tomaks when it's an eOS tag. 
             if (step+1) % print_every == 0:
-                print(print_loss_total)
                 # lets train and polot at the same time. 
                 print_loss_avg = print_loss_total / count
                 count = 0
@@ -550,7 +553,7 @@ args = {
     "pairs":train_idx_pairs, 
     "validation_pairs": val_pairs[:200], 
     "title": "Training Curve for Basic 1-Directional Encoder Decoder Model With LR = 0.0001",
-    "max_length_generation": 20, 
+    "max_length_generation": 759, 
     "plot_every": 10, 
     "print_every": 10
 }
@@ -558,6 +561,7 @@ args = {
 """
 We follow https://arxiv.org/pdf/1406.1078.pdf 
 and use the Adadelta optimizer
+Have max_length_generation
 
 """
 print(BATCH_SIZE)
