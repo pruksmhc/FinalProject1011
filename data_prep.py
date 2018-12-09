@@ -37,7 +37,7 @@ class Lang:
         self.name = name
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {0: PAD_token, 1: SOS_token, 2: EOS_token, 3:UNK_token}
+        self.index2word = {0: PAD_token, 1: 'SOS', 2: 'EOS', 3:UNK_token}
         self.n_words = 4  # Count SOS and EOS
 
     def addSentence(self, sentence):
@@ -194,7 +194,7 @@ def indexesFromSentence(lang, sentence):
         if lang.word2index.get(word) is not None:
             indices.append(lang.word2index[word])
         else:
-            indices.append(1) # UNK_INDEX
+            indices.append(3) # UNK_INDEX
     return indices
 
 def tensorFromSentence(lang, sentence):
