@@ -249,6 +249,41 @@ class Encoder_Batch_RNN(nn.Module):
         
         # **TODO**: What is rnn_out - for attention. 
         return rnn_out, self.hidden
+    
+class Decoder_Batch_2RNN(nn.Module):
+    def __init__(self, output_size, hidden_size):
+        super(Decoder_Batch_RNN, self).__init__()
+        self.hidden_size = hidden_size
+
+        self.embedding = nn.Embedding(output_size, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
+        self.out = nn.Linear(hidden_size, output_size)
+        self.softmax = nn.LogSoftmax(dim=2)
+        
+    def init_hidden(self, batch_size):
+        return torch.zeros(1, batch_size, self.hidden_size, device=device)
+
+    def forward(self, sents, sent_lengths, hidden):
+        '''
+        For evaluate, you compute [batch_size x ] [[1]]
+        all of the sentences so far will be same size
+        so don't need to sort it and unsort it
+        '''
+        batch_size = sents.size()[0]
+        
+        # get embedding
+        embed = self.embedding(sents)
+        # pack padded sequence
+        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, sent_lengths, batch_first=True)
+        
+        # fprop though RNN
+        self.hidden = hidden
+        rnn_out, self.hidden = self.gru(embed, self.hidden)
+        rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
+        
+        output = self.softmax(self.out(rnn_out))
+        # now output is the size 28 by 31257 (vocab size)
+        return output, self.hidden
 
 class Decoder_Batch_RNN(nn.Module):
     def __init__(self, output_size, hidden_size):
@@ -679,7 +714,7 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                           )
 
 encoder1 = Encoder_Batch_RNN(input_lang.n_words, hidden_size).to(device)
-decoder1 = Decoder_Batch_RNN(target_lang.n_words, hidden_size).to(device)
+decoder1 = Decoder_Batch_2RNN(target_lang.n_words, hidden_size).to(device)
 args = {
     'n_epochs': 10,
     'learning_rate': 0.01,
