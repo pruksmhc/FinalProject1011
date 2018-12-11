@@ -9,6 +9,8 @@ import torch
 import pickle
 import _pickle as cPickle
 import gc
+import pdb 
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 PAD_token = 0
@@ -37,7 +39,7 @@ class Lang:
         self.name = name
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {0: PAD_token, 1: SOS_token, 2: EOS_token, 3:UNK_token}
+        self.index2word = {0: "PAD", 1: "SOS", 2: "EOS", 3: "UNK"}
         self.n_words = 4  # Count SOS and EOS
 
     def addSentence(self, sentence):
@@ -145,14 +147,20 @@ def prepareNonTrainDataForLanguagePair(input_file_path_dev, target_file_path_dev
 
 def prepareDataInitial(lang1, lang2):
 # This sts up everything you need for preprocessing. 
-    input_file = 'iwslt-zh-en/train.tok.zh'
-    target_file = 'iwslt-zh-en/train.tok.en'
-    input_lang_train, target_lang_train, pairs = prepareTrainData(input_file, target_file, 'zh', 'eng', size=50000)
-    pickle.dump(pairs, open("preprocessed_data_no_elmo/iwslt-zh-eng/preprocessed_no_indices_pairs_train", "wb"))
+    input_file = 'iwslt-vi-en/train.tok.zh'
+    target_file = 'iwslt-vi-en/train.tok.en'
+    input_lang_train, target_lang_train, pairs = prepareTrainData(input_file, target_file, 'zh', 'eng')
+    pickle.dump(pairs, open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train", "wb"))
+    # we want to tokenize both the train input and target language. 
+    tensors_input = [tensorFromSentence(input_lang_train, s[0]) for s in pairs]
+    tensors_target = [tensorFromSentence(target_lang_train,s[1]) for s in pairs]
+    final_pairs = list(zip(tensors_input, tensors_target))
+    pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train_tokenized", "wb"))
+    pdb.set_trace()
     pickle.dump(input_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang", "wb"))
     pickle.dump(target_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang2+"lang", "wb"))
     lang2 = "eng"
-    for lang1 in ["zh", "vi"]:
+    for lang1 in [lang1]:
         for dataset in ["validation", "test"]:
             input_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang")
             target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_englang")
@@ -163,17 +171,16 @@ def prepareDataInitial(lang1, lang2):
                 source_language = open("iwslt-"+lang1+"-en/"+dataset+".tok."+lang1, encoding='utf-8').read().strip().split("\n")
                 actual_english_test = open("iwslt-"+lang1+"-en/"+dataset+".tok.en", encoding='utf-8').read().strip().split("\n")
             if lang1 == "vi":
-                tensors_input = [tensorFromSentence(input_lang, normalizeString(s), 0) for s in source_language]
+                tensors_input = [tensorFromSentence(input_lang, normalizeString(s)) for s in source_language]
             elif lang1 == "zh":
                 # don't normalize
-                tensors_input = [tensorFromSentence(input_lang,s, 0) for s in source_language]
+                tensors_input = [tensorFromSentence(input_lang,s) for s in source_language]
             reference_convert =[processReference(target_lang, normalizeString(s)) for s in actual_english_test]
             final_pairs = list(zip(tensors_input, reference_convert))
             pdb.set_trace()
             pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_indices_pairs_"+ dataset+"_tokenized", "wb"))
 
-def prepareData(input_file, target_file, input_lang, target_lang, size=None):
-    
+def prepareTrainData(input_file, target_file, input_lang, target_lang, size=None):
     input_lang, target_lang, pairs = readLangs(input_file, target_file, input_lang, target_lang, size)
     print("Read %s sentence pairs" % len(pairs))
     print("Trimmed to %s sentence pairs" % len(pairs))
@@ -198,7 +205,9 @@ def indexesFromSentence(lang, sentence):
     return indices
 
 def tensorFromSentence(lang, sentence):
-    indexes = indexesFromSentence(lang, sentence)
+    sentence = sentence.replace("  ", " ")
+    indexes = [SOS_token]
+    indexes.extend(indexesFromSentence(lang, sentence))
     indexes.append(EOS_token)
     return torch.tensor(indexes, dtype=torch.long, device=device).view(-1, 1)
 
@@ -207,3 +216,6 @@ def tensorsFromPair(pair, input_lang, target_lang):
     input_tensor = tensorFromSentence(input_lang, pair[0])
     target_tensor = tensorFromSentence(target_lang, pair[1])
     return (input_tensor, target_tensor)
+
+prepareDataInitial("vi", "eng")
+

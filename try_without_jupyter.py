@@ -7,7 +7,7 @@ import random
 import numpy as np
 import pickle
 import time
-
+import sys
 import torch
 import torch.nn as nn
 from torch import optim
@@ -17,14 +17,35 @@ import pdb
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 
-from model_architectures import Encoder_RNN, Decoder_RNN
-from data_prep import prepareData, tensorsFromPair, prepareNonTrainDataForLanguagePair, load_cpickle_gc
+from model_architectures import *
+from data_prep import *
 from misc import timeSince, load_cpickle_gc
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+class Lang:
+    def __init__(self, name):
+        self.name = name
+        self.word2index = {}
+        self.word2count = {}
+        self.index2word = {0: "PAD", 1: "SOS", 2: "EOS", 3: "UNK"}
+        self.n_words = 4  # Count SOS and EOS
 
-BATCH_SIZE = 32
+    def addSentence(self, sentence):
+        for word in sentence.split(' '):
+            self.addWord(word)
+
+    def addWord(self, word):
+        if word not in self.word2index:
+            self.word2index[word] = self.n_words
+            self.word2count[word] = 1
+            self.index2word[self.n_words] = word
+            self.n_words += 1
+        else:
+            self.word2count[word] += 1
+
+
+BATCH_SIZE = 16
 PAD_token = 0
 SOS_token = 1
 EOS_token = 2
@@ -134,7 +155,6 @@ class DecoderRNNBidirectionalBatchWithAttenntion(nn.Module):
     def init_hidden(self, batch_size):
         return torch.zeros(2, batch_size, self.hidden_size, device=device)
 
-#train_idx_pairs = load_cpickle_gc("train_vi_en_idx_pairs")
 class EncoderRNNBidirectionalBatch(nn.Module):
     def __init__(self, input_size, hidden_size):
         super(EncoderRNNBidirectionalBatch, self).__init__()
@@ -210,90 +230,6 @@ class DecoderRNNBidirectionalBatch(nn.Module):
 
 
 
-class Encoder_Batch_RNN(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(Encoder_Batch_RNN, self).__init__()
-        self.hidden_size = hidden_size
-        self.embedding = nn.Embedding(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
-        
-    def init_hidden(self, batch_size):
-        return torch.zeros(1, batch_size, self.hidden_size, device=device)
-
-    def forward(self, sents, sent_lengths):
-        '''
-            sents is a tensor with the shape (batch_size, padded_length )
-            when we evaluate sentence by sentence, you evaluate it with batch_size = 1, padded_length.
-            [[1, 2, 3, 4]] etc. 
-        '''
-        batch_size = sents.size()[0]
-        sent_lengths = list(sent_lengths)
-        # We sort and then do pad packed sequence here. 
-        descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
-        descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
-        descending_lengths = np.array(descending_lengths)
-        descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
-        
-        # get embedding
-        embed = self.embedding(descending_sents)
-        # pack padded sequence
-        embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
-        
-        # fprop though RNN
-        self.hidden = self.init_hidden(batch_size)
-        rnn_out, self.hidden = self.gru(embed, self.hidden)
-        # change the order back
-        change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
-        self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device)) 
-        
-        # **TODO**: What is rnn_out - for attention. 
-        return rnn_out, self.hidden
-
-class Decoder_Batch_RNN(nn.Module):
-    def __init__(self, output_size, hidden_size):
-        super(Decoder_Batch_RNN, self).__init__()
-        self.hidden_size = hidden_size
-
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
-        self.out = nn.Linear(hidden_size, output_size)
-        self.softmax = nn.LogSoftmax(dim=2)
-        
-    def init_hidden(self, batch_size):
-        return torch.zeros(1, batch_size, self.hidden_size, device=device)
-
-    def forward(self, sents, sent_lengths, hidden, train=True):
-        '''
-        For evaluate, you compute [batch_size x ] [[1]]
-        '''
-        batch_size = sents.size()[0]
-        sent_lengths = list(sent_lengths)
-        if train:
-            # sents is the original, and try  to see if self.hidden  is the same as sents. 
-            descending_lengths = [x for x, _ in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
-            descending_indices = [x for _, x in sorted(zip(sent_lengths, range(len(sent_lengths))), reverse=True)]
-            descending_lengths = np.array(descending_lengths)
-            descending_sents = torch.index_select(sents, 0, torch.tensor(descending_indices).to(device))
-            sents = descending_sents  
-        # get embedding
-        embed = self.embedding(sents)
-        # pack padded sequence
-        if train:
-            embed = torch.nn.utils.rnn.pack_padded_sequence(embed, descending_lengths, batch_first=True)
-        # fprop though RNN
-        self.hidden = hidden
-        rnn_out, self.hidden = self.gru(embed, self.hidden)
-        if train:
-            change_it_back = [x for _, x in sorted(zip(descending_indices, range(len(descending_indices))))]
-            self.hidden = torch.index_select(self.hidden, 1, torch.LongTensor(change_it_back).to(device))
-            rnn_out, _ = torch.nn.utils.rnn.pad_packed_sequence(rnn_out, batch_first=True)
-            # this basically pads it back, and then we have to actually get to the right order. 
-            # 0th dimension since rnn_out is of size 32. 
-            rnn_out = torch.index_select(rnn_out, 0, torch.LongTensor(change_it_back).to(device))
-        output = self.softmax(self.out(rnn_out))
-        # now output is the size 28 by 31257 (vocab size)
-        return output, self.hidden
-
 def indexesFromSentence(lang, sentence):
     words = sentence.split(' ')
     indices = []
@@ -358,6 +294,7 @@ def beam_search(decoder, decoder_input, hidden, max_length, k, target_lang):
 
     completed = completed_translations + candidates
     completed = sorted(completed, key= lambda x: x[1], reverse=True)[0] 
+    #it's quite weird that it's not learning  what to do without the. . . 
     final_translation = []
     for x in completed[0]:
         final_translation.append(target_lang.index2word[x.squeeze().item()])
@@ -409,33 +346,43 @@ def test_model(encoder, decoder, search, test_pairs, lang2, max_length):
     translated_predictions = []
     for i in range(len(encoder_inputs)):
         e_input = encoder_inputs[i]
-        decoded_words = generate_translation(encoder, decoder, e_input, max_length, lang2, search=search)
+        input_length = len(e_input)
+        decoded_words = generate_translation(encoder, decoder, e_input, input_length, lang2, search=search)
         translated_predictions.append(" ".join(decoded_words))
     start = time.time()
-    print(translated_predictions[0])
-    print(true_labels[0])
+    from random import randint
+    rand = randint(0, 100)
+    print(translated_predictions[rand])
+    print(true_labels[rand])
     bleurg = calculate_bleu(translated_predictions, true_labels)
     return bleurg
 
-def save_model(encoder, decoder, val_accs, train_accs, title):
+def save_model(encoder, decoder, title):
+    link = title.replace(" ", "")
+    torch.save(encoder.state_dict(), "output/"+link + "encodermodel_states")
+    torch.save(decoder.state_dict(), "output/"+link + "decodermodel_states")
+
+def make_graph(encoder, decoder, val_accs, train_accs, title):
+    print("SAVE")
     val_accs = np.array(val_accs) # this is the BLEU score. 
     max_val = val_accs.max() 
     train_accs = np.array(train_accs)
     link = title.replace(" ", "")
-    torch.save(encoder.state_dict(), "output/"+link + "encodermodel_states")
-    torch.save(decoder.state_dict(), "output/"+link + "decodermodel_states")
     pickle.dump(val_accs, open("output/"+link + "val_accuracies", "wb"))
     pickle.dump(train_accs, open("output/"+link + "train_accuracies", "wb"))
     pickle.dump(max_val, open("output/"+link + "maxvalaccis"+str(max_val), "wb"))
     # this is when you want to overlay
     num_in_epoch = np.shape(train_accs)[1]
     num_epochs = np.shape(train_accs)[0]
-    x_vals = np.arange(0, num_epochs, 1.0/float(num_in_epoch))
+    x_vals_train = np.arange(0, num_epochs, 1.0/float(num_in_epoch))
+    num_in_epoch = np.shape(val_accs)[1]
+    num_epochs = np.shape(val_accs)[0]
+    x_vals_val = np.arange(0, num_epochs, 1.0/float(num_in_epoch))
     fig = plt.figure()
     plt.title(title)
     # plot the title of this data. 
-    plt.plot(x_vals, train_accs.flatten(), label="Training Accuracy (NLLoss)")
-    plt.plot(x_vals, val_accs.flatten(), label="Validation Accuracy (BLEU score)")
+    plt.plot(x_vals_train, train_accs.flatten(), label="Training Accuracy (NLLoss)")
+    plt.plot(x_vals_val, val_accs.flatten(), label="Validation Accuracy (BLEU score)")
     plt.legend(loc="lower right")
     plt.ylabel("Accuracy of Model")
     plt.xlabel("Epochs (Batch Size 32)")
@@ -469,6 +416,7 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
     plot_loss =[]
     val_loss = []
     for epoch in range(n_epochs):
+
         plot_loss = []
         val_loss = []
         for step, (sent1s, sent1_lengths, sent2s, sent2_lengths) in enumerate(train_loader):
@@ -497,11 +445,12 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
                     s = torch.tensor([sent2_batch[i][j]]).to(device)
                     loss += criterion(o, s) # this will ignore if s is "EOS"
                     count += 1
-            print_loss_total += loss.item()
-            plot_loss_total += loss.item()
+            # check if there is an SOS here as well. 
             loss.backward()
             encoder_optimizer.step()
             decoder_optimizer.step()
+            print_loss_total += loss.item()
+            plot_loss_total += loss.item()
             # we also have tomaks when it's an eOS tag. 
             if (step+1) % print_every == 0:
                 # lets train and polot at the same time. 
@@ -510,29 +459,36 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
                 print_loss_total = 0
                 print('TRAIN SCORE %s (%d %d%%) %.4f' % (timeSince(start, step / n_epochs),
                                              step, step / n_epochs * 100, print_loss_avg))
-                v_loss = test_model(encoder, decoder, search, validation_pairs, lang2, max_length=max_length_generation)
+                with torch.no_grad():
+                    v_loss = test_model(encoder, decoder, search, validation_pairs, lang2, max_length=max_length_generation)
                 # returns bleu score
                 print("VALIDATION BLEU SCORE: "+str(v_loss))
                 val_loss.append(v_loss)
                 plot_loss.append(print_loss_avg)
+                # save it every time it hits the step now. 
+                save_model(encoder, decoder, title)
+                sys.stdin.flush()
                 plot_loss_total = 0
 
         plot_losses.append(plot_loss)
         val_losses.append(val_loss)
         print("AVERAGE PLOT LOSS")
         print(np.mean(plot_loss))
+        sys.stdin.flush()
         #encoder_scheduler.step(np.mean(plot_loss)) # this isnt' really doing anything. 
         #decoder_scheduler.step(np.mean(plot_loss))
-        #save_model(encoder, decoder, val_losses, plot_losses, title)
+        save_model(encoder, decoder, title)
+        make_graph(encoder, decoder, val_losses, plot_losses, title)
     assert len(val_losses) == len(plot_losses)
-    save_model(encoder, decoder, val_losses, plot_losses, title)
+    save_model(encoder, decoder, title)
+    make_graph(encoder, decoder, val_losses, plot_losses, title)
 
 hidden_size = 256
 print(BATCH_SIZE)
 input_lang = pickle.load(open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_vilang", "rb"))
 target_lang = pickle.load(open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_englang", "rb"))
-train_idx_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train_tokenized_sample")
-val_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_validation_tokenized")
+train_idx_pairs = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train_tokenized")
+val_pairs = pickle.load(open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_validation_tokenized", "rb"))
 train_dataset = LanguagePairDataset(train_idx_pairs)
 # is there anything in the train_idx_pairs that is only 0s right noww instea dof padding. 
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset, 
@@ -541,7 +497,9 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                           )
 
 encoder1 = Encoder_Batch_RNN(input_lang.n_words, hidden_size).to(device)
+encoder1.load_state_dict(torch.load("output/TrainingCurveforBasic1-DirectionalEncoderDecoderModelWithLR=0.001andmaxgeneration==input_lengthandSOStokenencodermodel_states"))
 decoder1 = Decoder_Batch_RNN(target_lang.n_words, hidden_size).to(device)
+decoder1.load_state_dict(torch.load("output/TrainingCurveforBasic1-DirectionalEncoderDecoderModelWithLR=0.001andmaxgeneration==input_lengthandSOStokendecodermodel_states"))
 args = {
     'n_epochs': 10,
     'learning_rate': 0.001,
@@ -550,15 +508,16 @@ args = {
     'decoder': decoder1,
     'lang1': input_lang, 
     'lang2': target_lang,
-    "pairs":train_idx_pairs, 
+    "pairs":train_idx_pairs[10000:], 
     "validation_pairs": val_pairs[:200], 
-    "title": "Training Curve for Basic 1-Directional Encoder Decoder Model With LR = 0.0001",
-    "max_length_generation": 759, 
-    "plot_every": 10, 
-    "print_every": 10
+    "title": "Training Curve for Basic 1-Directional Encoder Decoder Model With LR = 0.001 and max generation == input_length and SOS token",
+    "max_length_generation": 8, 
+    "plot_every": 500, 
+    "print_every": 500
 }
 
 """
+We take the input sentence as the length of the maximum generating sentence 
 We follow https://arxiv.org/pdf/1406.1078.pdf 
 and use the Adadelta optimizer
 Have max_length_generation
