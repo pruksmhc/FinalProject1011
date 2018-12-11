@@ -216,5 +216,3 @@ def tensorsFromPair(pair, input_lang, target_lang):
     target_tensor = tensorFromSentence(target_lang, pair[1])
     return (input_tensor, target_tensor)
 
-prepareDataInitial("vi", "eng")
-
