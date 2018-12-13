@@ -336,7 +336,7 @@ def load_cpickle_gc(dirlink):
     output.close()
     return mydict
 
-def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, max_length_generation, print_every=5000, plot_every=5000, learning_rate=3e-4, search="beam"):
+def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, max_length_generation, title, print_every=5000, plot_every=5000, learning_rate=3e-4, search="beam"):
     """
     lang1 is the Lang o|bject for language 1 
     Lang2 is the Lang object for language 2
@@ -352,16 +352,14 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, ma
     print_loss_total = 0  # Reset every print_every
     plot_loss_total = 0
     val_loss_total = 0
-    encoder_optimizer = torch.optim.SGD(encoder.parameters(), lr=learning_rate)
-    decoder_optimizer = torch.optim.SGD(decoder.parameters(), lr=learning_rate)
+    encoder_optimizer = torch.optim.Adam(encoder.parameters(), lr=learning_rate)
+    decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=learning_rate)
     #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     #training_pairs = [tensorsFromPair(pair, lang1, lang2, 0) for pair in pairs]
     for i in range(n_epochs):
         criterion = nn.NLLLoss()
         # framing it as a categorical loss function. 
         for iter in range(1, n_iters + 1):
-            if iter % 100 == 0:
-                print(iter)
             training_pair = training_pairs[iter - 1] 
             d_input_tensor = training_pair[0]
             d_target_tensor = training_pair[1]
@@ -387,12 +385,12 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2, max_length, ma
                 val_losses.append(val_loss_avg)
                 plot_loss_total = 0
                 val_loss_total = 0
-                torch.save(encoder.state_dict(), "encoder_"+str(i)+str(iter)+str(lang1.name)+str(lang2.name))
-                torch.save(decoder.state_dict(), "decoder_"+str(i)+str(iter)+str(lang1.name)+str(lang2.name))
+                torch.save(encoder.state_dict(), "encoder_"+str(lang1.name)+str(lang2.name))
+                torch.save(decoder.state_dict(), "decoder_"+str(lang1.name)+str(lang2.name))
                 pickle.dump(plot_loss_avg, open("training_loss"+str(lang1.name)+str(lang2.name), "wb"))
                 pickle.dump(val_loss_avg, open("val_loss"+str(lang1.name)+str(lang2.name), "wb"))
-    
-    showPlot(plot_losses)
+
+    save_model(model, val_loss_totle, plot_loss_total, title)
 
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
@@ -516,6 +514,34 @@ def evaluate(encoder, decoder, sentence,max_length,  max_length_generation, sear
             decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length_generation)  
         return decoded_words
 
+def save_model(model, val_accs, train_accs, title):
+    pdb.set_trace()
+    val_accs = np.array(val_accs) # this is the BLEU score. 
+    max_val = val_accs.max() 
+    train_accs = np.array(train_accs)
+    link = title
+    torch.save(model.state_dict(), link + "model_states")
+    pickle.dump(val_accs, open(link + "val_accuracies", "wb"))
+    pickle.dump(train_accs, open(link + "train_accuracies", "wb"))
+    pickle.dump(max_val, open(link + "maxvalaccis"+str(max_val), "wb"))
+    # this is when you want to overlay
+    num_in_epoch = np.shape(train_accs)[1]
+    num_epochs = np.shape(train_accs)[0]
+    x_vals = np.arange(0, num_epochs, 1.0/float(num_in_epoch))
+    fig = plt.figure()
+    plt.title(title)
+    # plot the title of this data. 
+    plt.plot(x_vals, train_accs.flatten(), label="Training Accuracy (NLLoss")
+    plt.plot(x_vals, val_accs.flatten(), label="Validation Accuracy (BLEU score)")
+    plt.legend(loc="lower right")
+    plt.ylabel("Accuracy of Model")
+    plt.xlabel("Epochs (Batch Size 32)")
+    plt.ylim(0,100)
+    plt.xlim(0, num_epochs)
+    plt.yticks([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    plt.xticks(np.arange(num_epochs + 1))
+    fig.savefig(link+"graph.png")
+
 
 import sacrebleu
 def calculate_bleu(predictions, labels):
@@ -545,17 +571,18 @@ def test_model(encoder, decoder,search, test_pairs, lang1,max_length, max_length
 
 input_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_vilang")
 target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_elmo_englang")
+
+# why is it outputing apos so much?
 hidden_size = 256
 encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
 decoder = DecoderRNN(target_lang.n_words, hidden_size).to(device)
-encoder.load_state_dict(torch.load("encoder_1055000vieng"))
-decoder.load_state_dict(torch.load("decoder_1055000vieng"))
+#decoder.load_state_dict(torch.load("decoder_035000vieng"))
 total_zh_en_train_pairs_length = 13376 
 n_iters = 10
 n_epochs = 10
 max_length_chinese = 530 # for chinese
 max_length_viet = 759
-max_generation = 619 # the maximum number of generation for vietnamese is the maxength of english trnaslation 
+max_generation = 30 # the maximum number of generation for vietnamese is the maxength of english trnaslation 
 # this is the same for both 
 trainIters(encoder, decoder, n_iters,n_epochs, input_lang, target_lang, max_length_viet, max_generation)
 
