@@ -3,6 +3,16 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 from data_prep import tensorFromSentence
+import numpy as np
+import pickle
+from random import randint
+
+PAD_token = 0
+SOS_token = 1
+EOS_token = 2
+UNK_token = 3
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def greedy_search(decoder, decoder_input, hidden, max_length):
     translation = []
@@ -20,7 +30,7 @@ def greedy_search(decoder, decoder_input, hidden, max_length):
     return translation
 
 
-def beam_search(decoder, decoder_input, hidden, max_length, k):
+def beam_search(decoder, decoder_input, hidden, max_length, k, target_lang):
     
     candidates = [(decoder_input, 0, hidden)]
     potential_candidates = []
@@ -34,7 +44,7 @@ def beam_search(decoder, decoder_input, hidden, max_length, k):
             c_score = c[1]
             c_hidden = c[2]
             # EOS token
-            if c_sequence[-1] == 1:
+            if c_sequence[-1] == EOS_token:
                 completed_translations.append((c_sequence, c_score))
                 k = k - 1
             else:
@@ -45,33 +55,32 @@ def beam_search(decoder, decoder_input, hidden, max_length, k):
                 for i in range(len(top_probs[0])):
                     word = torch.from_numpy(np.array([top_idx[0][i]]).reshape(1, 1)).to(device)
                     new_score = c_score + top_probs[0][i]
-                    potential_candidates.append((torch.cat((c_sequence, word)).to(device), new_score, hidden))
+                    potential_candidates.append((torch.cat((c_sequence, word)).to(device), new_score, c_hidden))
 
-        candidates = sorted(potential_candidates, key= lambda x: x[1], reverse=True)[0:k] 
+        candidates = sorted(potential_candidates, key= lambda x: x[1])[0:k] 
         potential_candidates = []
 
     completed = completed_translations + candidates
     completed = sorted(completed, key= lambda x: x[1], reverse=True)[0] 
+    #it's quite weird that it's not learning  what to do without the. . . 
     final_translation = []
     for x in completed[0]:
         final_translation.append(target_lang.index2word[x.squeeze().item()])
     return final_translation
 
-def generate_translation(encoder, decoder, sentence, max_length, search="greedy", k = None):
+
+def generate_translation(encoder, decoder, sentence, max_length, target_lang, search="greedy", k = None):
     """ 
     @param max_length: the max # of words that the decoder can return
     @returns decoded_words: a list of words in target language
     """    
     with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence)
-        input_length = input_tensor.size()[0]
+        input_tensor = sentence
+        input_length = sentence.size()[0]
         
         # encode the source sentence
-        encoder_hidden = encoder.initHidden()
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei],
-                                                     encoder_hidden)
-
+        encoder_hidden = encoder.init_hidden(1)
+        encoder_output, encoder_hidden = encoder(input_tensor.view(1, -1),torch.tensor([input_length]))
         # start decoding
         decoder_input = torch.tensor([[SOS_token]], device=device)  # SOS
         decoder_hidden = encoder_hidden
@@ -81,11 +90,10 @@ def generate_translation(encoder, decoder, sentence, max_length, search="greedy"
             decoded_words = greedy_search(decoder, decoder_input, decoder_hidden, max_length)
         elif search == 'beam':
             if k == None:
-                k = 2
-            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k)  
+                k = 5 # since k = 2 preforms badly
+            decoded_words = beam_search(decoder, decoder_input, decoder_hidden, max_length, k, target_lang)  
 
         return decoded_words
-
 
 
 def evaluate(encoder, decoder, sentence,max_length,  max_length_generation, search="greedy"):
@@ -139,20 +147,20 @@ def calculate_bleu(predictions, labels):
     bleu = sacrebleu.raw_corpus_bleu(predictions, [labels], .01).score
     return bleu
 
-def test_model(encoder, decoder,search, test_pairs, lang1,max_length, max_length_generation):
+def test_model(encoder, decoder, search, test_pairs, lang2, max_length=None):
     # for test, you only need the lang1 words to be tokenized,
     # lang2 words is the true labels
     encoder_inputs = [pair[0] for pair in test_pairs]
     true_labels = [pair[1] for pair in test_pairs]
     translated_predictions = []
-    for i in range(len(encoder_inputs)): 
-        if i% 100== 0:
-            print(i)
+    for i in range(len(encoder_inputs)):
         e_input = encoder_inputs[i]
-        decoded_words = evaluate(encoder, decoder, e_input, max_length, max_length_generation)
+        if max_length is None:
+            max_length = len(e_input)
+        decoded_words = generate_translation(encoder, decoder, e_input, max_length, lang2, search=search)
         translated_predictions.append(" ".join(decoded_words))
-    print(translated_predictions[0])
-    print(true_labels[0])
-    return calculate_bleu(translated_predictions, true_labels)
-
-    
+    rand = randint(0, 100)
+    print(translated_predictions[rand])
+    print(true_labels[rand])
+    bleurg = calculate_bleu(translated_predictions, true_labels)
+    return bleurg
