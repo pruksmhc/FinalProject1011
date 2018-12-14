@@ -11,7 +11,7 @@ import _pickle as cPickle
 import gc
 import pdb 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 
 PAD_token = 0
 SOS_token = 1
@@ -40,6 +40,7 @@ class Lang:
         self.word2index = {}
         self.word2count = {}
         self.index2word = {0: "PAD", 1: "SOS", 2: "EOS", 3: "UNK"}
+        self.n_words = 4
 
     def addSentence(self, sentence):
         for word in sentence.split(' '):
@@ -63,10 +64,12 @@ def unicodeToAscii(s):
 
 # lowercase, trim, and remove non-letter characters
 def normalizeString(s):
-    s = unicodeToAscii(s.lower().strip())
-    s = re.sub(r"([.!?])", r" \1", s)
-    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
-    return s
+    # s = unicodeToAscii(s.lower().strip())
+	s = s.lower().strip()    
+    # s = re.sub(r"([.!?])", r" \1", s)
+	s = re.sub(r"_", r" ", s)
+    # s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
+	return s
 
 def filterPair(p):
     return len(p[0].split(' ')) < MAX_LENGTH and \
