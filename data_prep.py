@@ -40,6 +40,7 @@ class Lang:
         self.word2index = {}
         self.word2count = {}
         self.index2word = {0: "PAD", 1: "SOS", 2: "EOS", 3: "UNK"}
+        self.n_words = 4
 
     def addSentence(self, sentence):
         for word in sentence.split(' '):
@@ -65,9 +66,9 @@ def unicodeToAscii(s):
 def normalizeString(s):
     s = unicodeToAscii(s.lower().strip())
     s = re.sub(r"([.!?])", r" \1", s)
-    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
+    s = re.sub(r"[^a-zA-Z.!?']+", r" ", s)
     return s
-
+# so let's do the apos thing and then try running it again - I jsut want it correctly running at least oNCE. 
 def filterPair(p):
     return len(p[0].split(' ')) < MAX_LENGTH and \
         len(p[1].split(' ')) < MAX_LENGTH 
@@ -88,22 +89,16 @@ def readLangs(input_file, target_file, input_lang, target_lang, size=None):
         
     with open(target_file, encoding='utf-8') as file:
         if size == None:
-            target_lines = open(target_file, encoding='utf-8').read().strip().split("\n")
+            target_lines = open(target_file, encoding='utf-8').read().strip().replace(" &apos;", "").split("\n")
         else:
             target_lines = [next(file).strip() for x in range(size)]
         
-    if input_lang == "zh":
-        target_pairs = [normalizeString(s) for s in target_lines]
-        pairs = list(zip(input_lines, target_pairs))
-    else:
-        lines = list(zip(input_lines, target_lines))
-        # Split every line into pairs and normalize
-        pairs = [[normalizeString(s) for s in l] for l in lines]
+    target_pairs = [normalizeString(s) for s in target_lines]
+    pairs = list(zip(input_lines, target_pairs))
     print(pairs[0])
 
     input_lang = Lang(input_lang)
     target_lang = Lang(target_lang)
-
     return input_lang, target_lang, pairs
 
 
@@ -134,9 +129,6 @@ def prepareNonTrainDataForLanguagePair(input_file_path_dev, target_file_path_dev
         else:
             source_language = open(input_file_path_test, encoding='utf-8').read().strip().split("\n")
             target_language = open(target_file_path_test, encoding='utf-8').read().strip().split("\n")
-        if input_lang.name== "vi":
-            tensors_input = [tensorFromSentence(input_lang, normalizeString(s)) for s in source_language]
-        elif input_lang.name == "zh":
             # don't normalize
             tensors_input = [tensorFromSentence(input_lang,s) for s in source_language]
         reference_convert =[processReference(target_lang, normalizeString(s)) for s in target_language]
@@ -146,38 +138,33 @@ def prepareNonTrainDataForLanguagePair(input_file_path_dev, target_file_path_dev
 
 def prepareDataInitial(lang1, lang2):
 # This sts up everything you need for preprocessing. 
-    input_file = 'iwslt-vi-en/train.tok.zh'
-    target_file = 'iwslt-vi-en/train.tok.en'
-    input_lang_train, target_lang_train, pairs = prepareTrainData(input_file, target_file, 'zh', 'eng')
-    pickle.dump(pairs, open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train", "wb"))
+    input_file = 'iwslt-'+lang1+'-en/train.tok.'+lang1
+    target_file = 'iwslt-'+lang1+'-en/train.tok.en'
+    input_lang_train, target_lang_train, pairs = prepareTrainData(input_file, target_file, lang1, 'eng')
+    #pickle.dump(pairs, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-eng/preprocessed_no_indices_pairs_train_2", "wb"))
     # we want to tokenize both the train input and target language. 
     tensors_input = [tensorFromSentence(input_lang_train, s[0]) for s in pairs]
     tensors_target = [tensorFromSentence(target_lang_train,s[1]) for s in pairs]
     final_pairs = list(zip(tensors_input, tensors_target))
-    pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-vi-eng/preprocessed_no_indices_pairs_train_tokenized", "wb"))
+    pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-eng/preprocessed_no_indices_pairs_train_tokenized_2", "wb"))
     pdb.set_trace()
-    pickle.dump(input_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang", "wb"))
-    pickle.dump(target_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang2+"lang", "wb"))
+    pickle.dump(input_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang_accent", "wb"))
+    pickle.dump(target_lang_train, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang2+"lang_accent", "wb"))
     lang2 = "eng"
     for lang1 in [lang1]:
         for dataset in ["validation", "test"]:
-            input_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang")
-            target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_englang")
+            input_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_"+lang1+"lang_accent")
+            target_lang = load_cpickle_gc("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_elmo_englang_accent")
             if dataset == "validation":
                 source_language =  open("iwslt-"+lang1+"-en/dev.tok."+lang1, encoding='utf-8').read().strip().split("\n")
                 actual_english_test = open("iwslt-"+lang1+"-en/dev.tok.en", encoding='utf-8').read().strip().split("\n")
             else:
                 source_language = open("iwslt-"+lang1+"-en/"+dataset+".tok."+lang1, encoding='utf-8').read().strip().split("\n")
                 actual_english_test = open("iwslt-"+lang1+"-en/"+dataset+".tok.en", encoding='utf-8').read().strip().split("\n")
-            if lang1 == "vi":
-                tensors_input = [tensorFromSentence(input_lang, normalizeString(s)) for s in source_language]
-            elif lang1 == "zh":
-                # don't normalize
                 tensors_input = [tensorFromSentence(input_lang,s) for s in source_language]
             reference_convert =[processReference(target_lang, normalizeString(s)) for s in actual_english_test]
             final_pairs = list(zip(tensors_input, reference_convert))
-            pdb.set_trace()
-            pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_indices_pairs_"+ dataset+"_tokenized", "wb"))
+            pickle.dump(final_pairs, open("preprocessed_data_no_elmo/iwslt-"+lang1+"-"+lang2+"/preprocessed_no_indices_pairs_"+ dataset+"_tokenized_2", "wb"))
 
 def prepareTrainData(input_file, target_file, input_lang, target_lang, size=None):
     input_lang, target_lang, pairs = readLangs(input_file, target_file, input_lang, target_lang, size)
