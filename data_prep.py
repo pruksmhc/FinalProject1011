@@ -11,7 +11,7 @@ import _pickle as cPickle
 import gc
 import pdb 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 
 PAD_token = 0
 SOS_token = 1
@@ -68,7 +68,7 @@ def normalizeString(s):
     s = re.sub(r"([.!?])", r" \1", s)
     s = re.sub(r"[^a-zA-Z.!?']+", r" ", s)
     return s
-# so let's do the apos thing and then try running it again - I jsut want it correctly running at least oNCE. 
+    
 def filterPair(p):
     return len(p[0].split(' ')) < MAX_LENGTH and \
         len(p[1].split(' ')) < MAX_LENGTH 
