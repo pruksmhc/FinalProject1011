@@ -497,9 +497,9 @@ def trainIters(encoder, decoder, n_epochs, pairs, validation_pairs, lang1, lang2
                 plot_loss.append(print_loss_avg)
                 plot_loss_total = 0
 
-    current_time = time.strftime("%Y-%m-%d-%H-%M-%S")
-    torch.save(encoder.state_dict(), "Attention_encoder_" + current_time)
-    torch.save(decoder.state_dict(), "Attention_decoder_" + current_time)
+        current_time = time.strftime("%Y-%m-%d-%H-%M-%S")
+        torch.save(encoder.state_dict(), "Attention_encoder_" + current_time)
+        torch.save(decoder.state_dict(), "Attention_decoder_" + current_time)
     
     
     
