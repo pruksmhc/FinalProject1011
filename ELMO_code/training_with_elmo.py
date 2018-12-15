@@ -3,7 +3,7 @@ import time
 import math
 import pdb
 import pickle
-from Models import * 
+from ModelsWithElmo import * 
 import torch
 import torch.nn as nn
 import preprocessing_with_elmo
@@ -54,7 +54,6 @@ class Lang:
         else:
             self.word2count[word] += 1
 
-
 def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length,attention=False):
     encoder_hidden = encoder.initHidden()
 
@@ -100,7 +99,7 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
                     decoder_input, decoder_hidden, encoder_outputs)
             else:
                 decoder_output, decoder_hidden, = decoder(decoder_input, decoder_hidden)
-            topv, topi = decoder_output.topk(1)
+            topv, topi = decoder_output.topk(1) # returns the kelement in the softmax with highest prob
             decoder_input = topi.squeeze().detach()  # detach from history as input
             loss += criterion(decoder_output, target_tensor[di])
             # so only sotp when you see an EOS_token
@@ -168,7 +167,6 @@ def trainIters(encoder, decoder, n_iters,n_epochs,  lang1, lang2,  print_every=1
         input_val = torch.LongTensor([tensorFromSentence(lang1, s[0]) for s in final_dev_pairs])
         target_val = torch.Tensor([tensorFromSentence(lang1, s[1]) for s in final_dev_pairs])
         input_val_tensor = torch.FloatTensor()
-        yo = torch.cat(input_val_tensor, input_val)
         target_val_tensor = torch.from_numpy(np.array(target_val))
         criterion = nn.NLLLoss()
         # framing it as a categorical loss function. 

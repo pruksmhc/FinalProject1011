@@ -173,11 +173,11 @@ def readLangs(lang1, lang2, dataset_type, reverse=False):
         read().strip().split('\n')
     # Split every line into pairs and normalize
     pairs = []
-    dirlink = "preprocessed_data/iwslt-%s-%s/%s_11" % (lang1, lang2, dataset_type)
+    dirlink = "preprocessed_data_without_elmo/iwslt-%s-%s/preprocessed_no_indices_pairs_%s" % (lang1, lang2, dataset_type)
     for i in range(len(lang1_file)):
         print(i)
         pair = ["<SOS>"]
-        lang1_text = token_funcs[lang1](normalizeString(lang1_file[i]))
+        lang1_text = token_funcs[lang1](lang1_file[i])
         pair.extend(lang1_text)
         pair.extend(["<EOS>", "<SOS>"])
         lang2_text = token_funcs[lang2](normalizeString(lang2_file[i]))
